@@ -63,24 +63,108 @@ function publicUser(user: NonNullable<import("../drizzle/schema").User>) {
   return safeUser;
 }
 
-export async function addSignatureStamp(originalBytes: Buffer, fileNumber: string, signerName: string, signerTitle: string, signedAt: Date) {
+export interface ManualSignatureOptions {
+  pngBase64?: string;
+  positionPercent?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  pageIndex?: number;
+  includeOfficialBadge?: boolean;
+}
+
+export async function addSignatureStamp(
+  originalBytes: Buffer,
+  fileNumber: string,
+  signerName: string,
+  signerTitle: string,
+  signedAt: Date,
+  manualSig?: ManualSignatureOptions
+) {
   const pdf = await PDFDocument.load(originalBytes);
   pdf.registerFontkit(fontkit);
   const pages = pdf.getPages();
-  const page = pages[pages.length - 1];
+  const pageIndex = (manualSig?.pageIndex !== undefined && manualSig.pageIndex >= 0 && manualSig.pageIndex < pages.length)
+    ? manualSig.pageIndex
+    : pages.length - 1;
+  const page = pages[pageIndex];
+  const pageWidth = page.getWidth();
+  const pageHeight = page.getHeight();
   const font = await pdf.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const arabicFontBytes = await fs.readFile(path.join(process.cwd(), "server/assets/NotoSansArabic.ttf"));
   const arabicFont = await pdf.embedFont(arabicFontBytes, { subset: true });
   const stampHeight = 62;
   const margin = 28;
-  page.drawRectangle({ x: margin, y: margin, width: page.getWidth() - margin * 2, height: stampHeight, color: rgb(0.93, 0.97, 0.95), borderColor: rgb(0.25, 0.50, 0.45), borderWidth: 1.2, opacity: 0.96 });
-  page.drawRectangle({ x: margin, y: margin + stampHeight - 5, width: page.getWidth() - margin * 2, height: 5, color: rgb(0.25, 0.50, 0.45) });
+
+  page.drawRectangle({ x: margin, y: margin, width: pageWidth - margin * 2, height: stampHeight, color: rgb(0.93, 0.97, 0.95), borderColor: rgb(0.25, 0.50, 0.45), borderWidth: 1.2, opacity: 0.96 });
+  page.drawRectangle({ x: margin, y: margin + stampHeight - 5, width: pageWidth - margin * 2, height: 5, color: rgb(0.25, 0.50, 0.45) });
   page.drawText("E-SIGNED | PUBLIC PROSECUTION", { x: margin + 12, y: margin + 38, size: 10, font, color: rgb(0.10, 0.25, 0.31) });
   page.drawText(`File: ${fileNumber}`, { x: margin + 12, y: margin + 22, size: 8.5, font: arabicFont, color: rgb(0.25, 0.38, 0.40) });
   page.drawText(`الموقّع: ${signerName || signerTitle}`, { x: margin + 12, y: margin + 9, size: 8.5, font: arabicFont, color: rgb(0.25, 0.38, 0.40) });
-  page.drawText(`Date: ${signedAt.toISOString().slice(0, 16).replace("T", " ")} UTC`, { x: page.getWidth() - margin - 185, y: margin + 22, size: 8, font: regular, color: rgb(0.25, 0.38, 0.40) });
-  page.drawText("Original preserved", { x: page.getWidth() - margin - 185, y: margin + 9, size: 8, font: regular, color: rgb(0.25, 0.38, 0.40) });
+  page.drawText(`Date: ${signedAt.toISOString().slice(0, 16).replace("T", " ")} UTC`, { x: pageWidth - margin - 185, y: margin + 22, size: 8, font: regular, color: rgb(0.25, 0.38, 0.40) });
+  page.drawText(manualSig?.pngBase64 ? "Handwritten & Certified" : "Original preserved", { x: pageWidth - margin - 185, y: margin + 9, size: 8, font: regular, color: rgb(0.25, 0.38, 0.40) });
+
+  if (manualSig?.pngBase64) {
+    let cleanBase64 = manualSig.pngBase64;
+    if (cleanBase64.includes("base64,")) {
+      cleanBase64 = cleanBase64.split("base64,")[1];
+    }
+    const pngBuffer = Buffer.from(cleanBase64, "base64");
+    const embeddedPng = await pdf.embedPng(pngBuffer);
+
+    let sigX: number;
+    let sigY: number;
+    let sigWidth: number;
+    let sigHeight: number;
+
+    if (manualSig.positionPercent) {
+      sigWidth = (manualSig.positionPercent.width / 100) * pageWidth;
+      sigHeight = (manualSig.positionPercent.height / 100) * pageHeight;
+      sigX = (manualSig.positionPercent.x / 100) * pageWidth;
+      sigY = pageHeight - ((manualSig.positionPercent.y / 100) * pageHeight) - sigHeight;
+    } else {
+      sigWidth = Math.min(180, pageWidth * 0.28);
+      sigHeight = Math.min(65, pageHeight * 0.09);
+      sigX = margin + 15;
+      sigY = margin + stampHeight + 15;
+    }
+
+    sigX = Math.max(5, Math.min(pageWidth - sigWidth - 5, sigX));
+    sigY = Math.max(5, Math.min(pageHeight - sigHeight - 5, sigY));
+
+    if (manualSig.includeOfficialBadge !== false) {
+      const padX = 6;
+      const padY = 6;
+      page.drawRectangle({
+        x: sigX - padX,
+        y: sigY - padY - 12,
+        width: sigWidth + padX * 2,
+        height: sigHeight + padY * 2 + 12,
+        color: rgb(0.97, 0.99, 0.98),
+        borderColor: rgb(0.20, 0.50, 0.42),
+        borderWidth: 1,
+        opacity: 0.92,
+      });
+      page.drawText(`توقيع واعتماد: ${signerName || "فضيلة النائب العام"}`, {
+        x: sigX - padX + 4,
+        y: sigY - padY - 9,
+        size: 7,
+        font: arabicFont,
+        color: rgb(0.18, 0.42, 0.36),
+      });
+    }
+
+    page.drawImage(embeddedPng, {
+      x: sigX,
+      y: sigY,
+      width: sigWidth,
+      height: sigHeight,
+    });
+  }
+
   return Buffer.from(await pdf.save());
 }
 
@@ -162,6 +246,13 @@ export const appRouter = router({
       directorInstruction: z.string().min(1, "نص التوجيه مطلوب"),
       signatureName: z.string().default("فضيلة النائب العام"),
       signatureTitle: z.string().default("النائب العام للجمهورية"),
+      signaturePngBase64: z.string().optional(),
+      signaturePosition: z.object({
+        x: z.number().min(0).max(100),
+        y: z.number().min(0).max(100),
+        width: z.number().min(5).max(100),
+        height: z.number().min(2).max(100),
+      }).optional(),
       assignedDepartment: z.string().max(255).optional().nullable(),
       assignedEmployee: z.string().max(255).optional().nullable(),
       dueDate: z.string().optional().nullable(),
@@ -184,7 +275,20 @@ export const appRouter = router({
       }
 
       const signedAt = new Date();
-      const signedBytes = await addSignatureStamp(originalBytes, file.fileNumber, input.signatureName, input.signatureTitle, signedAt);
+      const signedBytes = await addSignatureStamp(
+        originalBytes,
+        file.fileNumber,
+        input.signatureName,
+        input.signatureTitle,
+        signedAt,
+        input.signaturePngBase64
+          ? {
+              pngBase64: input.signaturePngBase64,
+              positionPercent: input.signaturePosition,
+              includeOfficialBadge: true,
+            }
+          : undefined
+      );
       const signed = await storagePut(`incoming/signed/${file.year}/${file.fileNumber}.pdf`, signedBytes, "application/pdf");
 
       const updated = await updateIncomingFile(input.fileId, {
@@ -208,10 +312,10 @@ export const appRouter = router({
       await addFileHistory({
         fileId: input.fileId,
         actorName: `${actorName(ctx)} (النائب العام)`,
-        actionType: "مرحلة النائب العام: اعتماد التوجيه والتوقيع",
+        actionType: input.signaturePngBase64 ? "مرحلة النائب العام: توجيه وتوقيع يدوي على PDF" : "مرحلة النائب العام: اعتماد التوجيه والتوقيع",
         oldStatus: file.status,
         newStatus: "PENDING_EMPLOYEE",
-        details: `تم توجيه المعاملة والتوقيع والتأكيد إلكترونياً. التوجيه: "${input.directorInstruction}". أُعيدت إلى الموظف لإدخال المرحلة الثانية والترحيل النهائي.`,
+        details: `تم توجيه المعاملة والتوقيع ${input.signaturePngBase64 ? "بالقلم الرقمي اليدوي ولصقه على الـ PDF" : "والتأكيد إلكترونياً"}. التوجيه: "${input.directorInstruction}". أُعيدت إلى الموظف لإدخال المرحلة الثانية والترحيل النهائي.`,
       });
 
       return updated;
@@ -265,7 +369,12 @@ export const appRouter = router({
       if (newStatus !== current.status || input.actionLabel) await createNotification({ recipientOpenId: ENV.ownerOpenId || undefined, recipientRole: "director", fileId: input.fileId, kind: "workflow_update", priority: importancePriority(current.importance) as any, title: "تحديث على ملف وارد", body: `تم تحديث الملف رقم ${current.fileNumber}: ${input.actionLabel || newStatus}` });
       return updated;
     }),
-    sign: directorProcedure.input(z.object({ fileId: z.number().int().positive(), signatureName: z.string().min(1).max(255), signatureTitle: z.string().min(1).max(255), instruction: z.string().max(5000).optional() })).mutation(async ({ input, ctx }) => {
+    sign: directorProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      signatureName: z.string().max(255).optional().nullable().transform((val) => (val && val.trim().length > 0 ? val.trim() : "رئيس النيابة العامة")),
+      signatureTitle: z.string().max(255).optional().nullable().transform((val) => (val && val.trim().length > 0 ? val.trim() : "رئيس النيابة العامة")),
+      instruction: z.string().max(5000).optional(),
+    })).mutation(async ({ input, ctx }) => {
       const file = await getIncomingFile(input.fileId);
       if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
       
@@ -288,6 +397,107 @@ export const appRouter = router({
       const signed = await storagePut(`incoming/signed/${file.year}/${file.fileNumber}.pdf`, signedBytes, "application/pdf");
       const updated = await updateIncomingFile(input.fileId, { isSigned: true, signedFileKey: signed.key, signedFileUrl: signed.url, signatureName: input.signatureName, signatureTitle: input.signatureTitle, signedAt, signedInstruction: input.instruction });
       await addFileHistory({ fileId: input.fileId, actorName: actorName(ctx), actionType: "توقيع إلكتروني", details: `تم إنشاء نسخة موقعة منفصلة. الموقع: ${input.signatureName} - ${input.signatureTitle}` });
+      return updated;
+    }),
+    applyManualSignature: protectedProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      signaturePngBase64: z.string().min(1, "صورة التوقيع اليدوي مطلوبة"),
+      signerName: z.string().max(255).optional().nullable().transform((val) => (val && val.trim().length > 0 ? val.trim() : "فضيلة النائب العام")),
+      signerTitle: z.string().max(255).optional().nullable().transform((val) => (val && val.trim().length > 0 ? val.trim() : "النائب العام للجمهورية")),
+      instruction: z.string().max(5000).optional().nullable(),
+      positionPercent: z.object({
+        x: z.number().min(0).max(100),
+        y: z.number().min(0).max(100),
+        width: z.number().min(5).max(100),
+        height: z.number().min(2).max(100),
+      }).optional(),
+      pageIndex: z.number().int().min(0).optional(),
+      includeOfficialBadge: z.boolean().default(true),
+      advanceToEmployee: z.boolean().optional(),
+      assignedDepartment: z.string().max(255).optional().nullable(),
+      assignedEmployee: z.string().max(255).optional().nullable(),
+      dueDate: z.string().optional().nullable(),
+      notes: z.string().max(5000).optional().nullable(),
+    })).mutation(async ({ input, ctx }) => {
+      const file = await getIncomingFile(input.fileId);
+      if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
+
+      let sourceBytes: Buffer | null = null;
+      if (file.originalFileKey) {
+        sourceBytes = await getFileBytes(file.originalFileKey);
+      }
+      if (!sourceBytes) {
+        sourceBytes = await generateProsecutionPdf(file, "original");
+        const storedOriginal = await storagePut(`incoming/original/${file.year}/${file.fileNumber}.pdf`, sourceBytes, "application/pdf");
+        await updateIncomingFile(file.id, {
+          originalFileKey: storedOriginal.key,
+          originalFileUrl: storedOriginal.url,
+        });
+      }
+
+      const signedAt = new Date();
+      const signedBytes = await addSignatureStamp(
+        sourceBytes,
+        file.fileNumber,
+        input.signerName,
+        input.signerTitle,
+        signedAt,
+        {
+          pngBase64: input.signaturePngBase64,
+          positionPercent: input.positionPercent,
+          pageIndex: input.pageIndex,
+          includeOfficialBadge: input.includeOfficialBadge,
+        }
+      );
+
+      const signed = await storagePut(`incoming/signed/${file.year}/${file.fileNumber}.pdf`, signedBytes, "application/pdf");
+
+      const updateData: any = {
+        isSigned: true,
+        signedFileKey: signed.key,
+        signedFileUrl: signed.url,
+        signatureName: input.signerName,
+        signatureTitle: input.signerTitle,
+        signedAt,
+      };
+
+      if (input.instruction) {
+        updateData.signedInstruction = input.instruction;
+        updateData.directorInstruction = input.instruction;
+      }
+
+      if (input.advanceToEmployee) {
+        updateData.status = "PENDING_EMPLOYEE";
+        if (input.assignedDepartment !== undefined) updateData.assignedDepartment = input.assignedDepartment;
+        if (input.assignedEmployee !== undefined) updateData.assignedEmployee = input.assignedEmployee;
+        if (input.dueDate) updateData.dueDate = new Date(input.dueDate);
+        if (input.notes !== undefined) updateData.notes = input.notes;
+        updateData.directedAt = signedAt;
+        updateData.currentResponsible = file.registeredBy || "موظف الاستقبال والتسجيل (المرحلة الثانية: بانتظار تفريغ التوجيه والترحيل النهائي)";
+      }
+
+      const updated = await updateIncomingFile(input.fileId, updateData);
+
+      await addFileHistory({
+        fileId: input.fileId,
+        actorName: `${actorName(ctx)} (${ctx.user.role === "director" ? "النائب العام" : "عضو النيابة العامة"})`,
+        actionType: "توقيع يدوي ولصق على PDF",
+        oldStatus: file.status,
+        newStatus: updateData.status || file.status,
+        details: `تم لصق وتثبيت التوقيع اليدوي بالقلم الرقمي على وثيقة الـ PDF بنجاح. الموقّع: ${input.signerName} (${input.signerTitle})${input.instruction ? ` | التوجيه: "${input.instruction}"` : ""}`,
+      });
+
+      if (input.advanceToEmployee) {
+        await createNotification({
+          recipientRole: "input",
+          fileId: file.id,
+          kind: "workflow_update",
+          priority: importancePriority(file.importance) as any,
+          title: "معاملة وارد موقعة يدوياً بانتظار الترحيل النهائي",
+          body: `قام النائب العام بتوقيع وتوجيه المعاملة رقم ${file.fileNumber} يدوياً وأحيلت للمرحلة الثانية`,
+        });
+      }
+
       return updated;
     }),
     adminUpdate: adminProcedure.input(z.object({

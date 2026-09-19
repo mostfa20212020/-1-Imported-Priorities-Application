@@ -79,4 +79,17 @@ describe("incoming files workflow router", () => {
     const caller = appRouter.createCaller(createContext("admin"));
     await expect(caller.auth.login({ username: "not-a-user", password: "wrong-password" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
+
+  it("accepts empty or whitespace signerName and signerTitle in applyManualSignature without Zod too_small error", async () => {
+    const caller = appRouter.createCaller(createContext("director"));
+    // Providing empty strings for signerName and signerTitle should pass validation and reach file lookup
+    await expect(
+      caller.files.applyManualSignature({
+        fileId: 999999,
+        signaturePngBase64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        signerName: "",
+        signerTitle: "   ",
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
 });

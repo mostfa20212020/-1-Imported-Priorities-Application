@@ -29,6 +29,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  PenTool,
   Plus,
   Printer,
   RefreshCw,
@@ -54,6 +55,7 @@ import {
   AutoClassificationBanner,
   PreSaveClassificationReview,
 } from "@/components/AutoClassificationBanner";
+import { ManualSignatureModal } from "@/components/ManualSignatureModal";
 
 const statusLabels: Record<string, string> = {
   new: "جديد",
@@ -1570,22 +1572,29 @@ function NotificationsPanel({ notifications, onClose, onOpenFile }: { notificati
   return <div className="notifications-panel"><div className="notifications-head"><div><h3>الإشعارات</h3><span>{notifications.filter((item) => !item.readAt).length} غير مقروءة</span></div><button className="icon-button" onClick={onClose}><X size={17} /></button></div>{notifications.length === 0 ? <div className="notification-empty"><Bell size={22} /><span>لا توجد إشعارات جديدة</span></div> : <div className="notifications-list">{notifications.slice(0, 8).map((item) => <button key={item.id} className={`notification-item ${!item.readAt ? "unread" : ""}`} onClick={() => { if (!item.readAt) markRead.mutate({ id: item.id }); if (item.fileId) onOpenFile(item.fileId); }}><div className={`notification-icon ${importanceColors[item.priority]}`}><Bell size={15} /></div><div><strong>{item.title}</strong><p>{item.body}</p><small>{formatDateTime(item.createdAt)}</small></div>{!item.readAt && <span className="unread-dot" />}</button>)}</div>}</div>;
 }
 
-function PdfViewerModal({ file, initialType = "original", onClose }: { file: any; initialType?: "original" | "signed"; onClose: () => void }) {
-  const [docType, setDocType] = useState<"original" | "signed">(file.isSigned && initialType === "signed" ? "signed" : "original");
+function PdfViewerModal({ file: initialFile, initialType = "original", onClose }: { file: any; initialType?: "original" | "signed"; onClose: () => void }) {
+  const [currentFile, setCurrentFile] = useState(initialFile);
+  const [docType, setDocType] = useState<"original" | "signed">(initialFile.isSigned && initialType === "signed" ? "signed" : "original");
   const [zoom, setZoom] = useState<number>(100);
+  const [manualSignOpen, setManualSignOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
 
   const token = typeof window !== "undefined"
     ? localStorage.getItem("alawliyat_token") || sessionStorage.getItem("alawliyat_token") || ""
     : "";
 
   const pdfUrl = useMemo(() => {
-    const base = docType === "signed" ? `/api/files/${file.id}/signed-pdf` : `/api/files/${file.id}/pdf`;
-    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
-  }, [file.id, docType, token]);
+    const base = docType === "signed" ? `/api/files/${currentFile.id}/signed-pdf` : `/api/files/${currentFile.id}/pdf`;
+    const full = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+    return `${full}${full.includes("?") ? "&" : "?"}v=${refreshKey}`;
+  }, [currentFile.id, docType, token, refreshKey]);
 
   const fileName = docType === "signed"
-    ? `وارد_موقّع_${file.fileNumber.replace(/[\/\\]/g, "_")}.pdf`
-    : (file.originalFileName || `وارد_${file.fileNumber.replace(/[\/\\]/g, "_")}.pdf`);
+    ? `وارد_موقّع_${currentFile.fileNumber.replace(/[\/\\]/g, "_")}.pdf`
+    : (currentFile.originalFileName || `وارد_${currentFile.fileNumber.replace(/[\/\\]/g, "_")}.pdf`);
 
   return (
     <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 120 }}>
@@ -1596,8 +1605,8 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
               <FileText size={20} />
             </div>
             <div>
-              <h3>معاينة الوثيقة: وارد رقم {file.fileNumber}</h3>
-              <span>{file.subject}</span>
+              <h3>معاينة الوثيقة: وارد رقم {currentFile.fileNumber}</h3>
+              <span>{currentFile.subject}</span>
             </div>
           </div>
 
@@ -1610,7 +1619,7 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
               <FileText size={13} />
               المستند الأصلي
             </button>
-            {file.isSigned && (
+            {currentFile.isSigned && (
               <button
                 type="button"
                 className={`pdf-version-tab ${docType === "signed" ? "active" : ""}`}
@@ -1623,6 +1632,29 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
           </div>
 
           <div className="pdf-viewer-actions">
+            <button
+              type="button"
+              className="primary-button small"
+              style={{
+                background: "#1c5563",
+                color: "#ffffff",
+                padding: "0 12px",
+                height: "30px",
+                fontSize: "11px",
+                fontWeight: 700,
+                gap: "6px",
+                display: "inline-flex",
+                alignItems: "center",
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+              }}
+              onClick={() => setManualSignOpen(true)}
+              title="أداة التوقيع اليدوي بالقلم الرقمي ولصقها مباشرة على ملف الـ PDF"
+            >
+              <PenTool size={14} />
+              <span>توقيع يدوي ولصق على PDF</span>
+            </button>
             <div style={{ display: "inline-flex", gap: "3px", background: "#e6efec", borderRadius: "6px", padding: "2px" }}>
               <button
                 type="button"
@@ -1675,10 +1707,10 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
 
         <div className="pdf-frame-wrapper">
           <iframe
-            key={`${pdfUrl}-${zoom}`}
+            key={`${pdfUrl}-${zoom}-${refreshKey}`}
             src={`${pdfUrl}#zoom=${zoom}`}
             className="pdf-iframe"
-            title={`معاينة PDF - وارد ${file.fileNumber}`}
+            title={`معاينة PDF - وارد ${currentFile.fileNumber}`}
           />
         </div>
 
@@ -1699,6 +1731,24 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
           </div>
         </div>
       </div>
+
+      {manualSignOpen && (
+        <ManualSignatureModal
+          file={currentFile}
+          currentUser={user}
+          isOpen={manualSignOpen}
+          onClose={() => setManualSignOpen(false)}
+          onSuccess={(updated) => {
+            setCurrentFile(updated);
+            setDocType("signed");
+            setRefreshKey((k) => k + 1);
+            toast.success("تم لصق التوقيع اليدوي وحفظ النسخة الموقعة رسمياً بنجاح!");
+            utils.files.list.invalidate();
+            utils.files.get.invalidate({ id: currentFile.id });
+            utils.files.stats.invalidate();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1830,6 +1880,7 @@ function FileDetailsModal({
   const isDirector = role === "director";
   const isReception = role === "input";
   const canDirect = isAdmin || isDirector;
+  const { user } = useAuth();
 
   const [actionOpen, setActionOpen] = useState(false);
   const [adminEditOpen, setAdminEditOpen] = useState(false);
@@ -1837,6 +1888,7 @@ function FileDetailsModal({
   const [editForm, setEditForm] = useState<any>(null);
 
   const [pdfPreviewType, setPdfPreviewType] = useState<"original" | "signed" | null>(null);
+  const [manualSignOpen, setManualSignOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [department, setDepartment] = useState("");
   const [employee, setEmployee] = useState("");
@@ -2201,6 +2253,15 @@ function FileDetailsModal({
                     <Signature size={14} /> عرض الموقّع
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="primary-button small"
+                  style={{ background: "#0f3d64", gap: "5px" }}
+                  onClick={() => setManualSignOpen(true)}
+                  title="أداة التوقيع اليدوي بالقلم ولصقها مباشرة على ملف PDF"
+                >
+                  <PenTool size={14} /> توقيع يدوي على PDF
+                </button>
                 <a
                   href={`/api/files/${file.id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ""}`}
                   download={file.originalFileName || `وارد_${file.fileNumber.replace(/[\/\\]/g, "_")}.pdf`}
@@ -2282,7 +2343,17 @@ function FileDetailsModal({
                   </Field>
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ background: "#0f3d64", gap: "8px" }}
+                    onClick={() => setManualSignOpen(true)}
+                    title="فتح أداة التوقيع اليدوي بالقلم الرقمي ولصق التوقيع والختم مباشرة على مستند الـ PDF"
+                  >
+                    <PenTool size={16} />
+                    <span>توقيع يدوي بالقلم ولصق على PDF</span>
+                  </button>
                   <button
                     type="button"
                     className="primary-button"
@@ -2507,6 +2578,19 @@ function FileDetailsModal({
           file={file}
           initialType={pdfPreviewType}
           onClose={() => setPdfPreviewType(null)}
+        />
+      )}
+      {manualSignOpen && (
+        <ManualSignatureModal
+          file={file}
+          currentUser={user}
+          isOpen={manualSignOpen}
+          onClose={() => setManualSignOpen(false)}
+          onSuccess={(_updated) => {
+            toast.success("تم لصق التوقيع اليدوي بنجاح وحفظ النسخة الموقعة!");
+            setPdfPreviewType("signed");
+            onChanged();
+          }}
         />
       )}
     </>
