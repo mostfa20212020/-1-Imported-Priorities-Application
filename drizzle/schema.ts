@@ -23,7 +23,7 @@ export const incomingFiles = mysqlTable("incoming_files", {
   fileType: varchar("fileType", { length: 128 }).notNull(),
   subject: varchar("subject", { length: 500 }).notNull(),
   importance: mysqlEnum("importance", ["normal", "important", "urgent"]).default("normal").notNull(),
-  status: mysqlEnum("status", ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived"]).default("new").notNull(),
+  status: mysqlEnum("status", ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived", "PENDING_AG", "PENDING_EMPLOYEE", "COMPLETED"]).default("PENDING_AG").notNull(),
   originalFileKey: text("originalFileKey"),
   originalFileUrl: text("originalFileUrl"),
   originalFileName: varchar("originalFileName", { length: 255 }),

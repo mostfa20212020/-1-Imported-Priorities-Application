@@ -132,7 +132,7 @@ const inMemoryFiles: IncomingFile[] = [
     fileType: "وارد عام",
     subject: "تقرير القضايا الجنائية المستعجلة لشهر فبراير 2026 للتوجيه بشأنها",
     importance: "urgent",
-    status: "awaiting_direction",
+    status: "PENDING_AG",
     originalFileKey: null,
     originalFileUrl: null,
     originalFileName: "تقرير_القضايا_المستعجلة_فبراير_2026.pdf",
@@ -147,10 +147,10 @@ const inMemoryFiles: IncomingFile[] = [
     assignedDepartment: "الشعبة الجزائية الأولى",
     assignedEmployee: null,
     directorInstruction: null,
-    notes: "يتطلب توجيه عاجل نظراً لانتهاء المهلة القضائية المحددة",
+    notes: "يتطلب توجيه عاجل من فضيلة النائب العام نظراً لانتهاء المهلة القضائية المحددة",
     dueDate: new Date("2026-03-20T12:00:00Z"),
     registeredBy: "موظف الاستقبال والتسجيل",
-    currentResponsible: "بانتظار توجيه رئيس النيابة",
+    currentResponsible: "النائب العام للتوجيه والتوقيع (المرحلة الأولى)",
     createdAt: new Date("2026-03-10T09:15:00Z"),
     updatedAt: new Date("2026-03-10T09:15:00Z"),
     directedAt: null,
@@ -165,25 +165,25 @@ const inMemoryFiles: IncomingFile[] = [
     fileType: "وارد مكاتبات",
     subject: "طلب إفادة حول ملف الطعن رقم 454 وموقف النيابة العامة بالدعوى",
     importance: "important",
-    status: "in_progress",
+    status: "PENDING_EMPLOYEE",
     originalFileKey: null,
     originalFileUrl: null,
     originalFileName: "مذكرة_استئناف_454.pdf",
     originalMimeType: "application/pdf",
     signedFileKey: null,
     signedFileUrl: null,
-    isSigned: false,
-    signatureName: null,
-    signatureTitle: null,
-    signedAt: null,
-    signedInstruction: null,
+    isSigned: true,
+    signatureName: "فضيلة النائب العام",
+    signatureTitle: "النائب العام للجمهورية",
+    signedAt: new Date("2026-03-11T12:00:00Z"),
+    signedInstruction: "يُحال لعضو النيابة المختص لإعداد المذكرة القانونية خلال 48 ساعة وموافاتنا بنسخة",
     assignedDepartment: "إدارة الشؤون القانونية",
     assignedEmployee: "عضو النيابة - د. أحمد سيف",
-    directorInstruction: "يُحال لعضو النيابة المختص لإعداد المذكرة القانونية خلال 48 ساعة",
-    notes: "تمت إحالة الملف للدراسة",
+    directorInstruction: "يُحال لعضو النيابة المختص لإعداد المذكرة القانونية خلال 48 ساعة وموافاتنا بنسخة",
+    notes: "تم توقيع وتوجيه المعاملة من قبل النائب العام وهي بانتظار تفريغ التوجيه والترحيل النهائي من الموظف",
     dueDate: new Date("2026-03-18T14:00:00Z"),
     registeredBy: "موظف الاستقبال والتسجيل",
-    currentResponsible: "عضو النيابة - د. أحمد سيف",
+    currentResponsible: "موظف الاستقبال والتسجيل (المرحلة الثانية: تفريغ التوجيه والترحيل النهائي)",
     createdAt: new Date("2026-03-11T10:35:00Z"),
     updatedAt: new Date("2026-03-11T12:00:00Z"),
     directedAt: new Date("2026-03-11T12:00:00Z"),
@@ -618,15 +618,15 @@ export async function getFileStats() {
       const result = rows.reduce(
         (stats, row) => {
           stats.total += 1;
-          if (row.status === "new") stats.newFiles += 1;
-          if (row.status === "awaiting_direction") stats.awaiting += 1;
+          if (row.status === "new" || row.status === "awaiting_direction" || row.status === "PENDING_AG") stats.awaiting += 1;
+          if (row.status === "PENDING_EMPLOYEE") stats.pendingEmployee += 1;
           if (row.status === "in_progress" || row.status === "directed") stats.inProgress += 1;
-          if (row.status === "completed") stats.completed += 1;
+          if (row.status === "completed" || row.status === "COMPLETED") stats.completed += 1;
           if (row.importance === "urgent") stats.urgent += 1;
           stats.byType[row.fileType] = (stats.byType[row.fileType] || 0) + 1;
           return stats;
         },
-        { total: 0, newFiles: 0, awaiting: 0, inProgress: 0, completed: 0, urgent: 0, byType: {} as Record<string, number> },
+        { total: 0, newFiles: 0, awaiting: 0, pendingEmployee: 0, inProgress: 0, completed: 0, urgent: 0, byType: {} as Record<string, number> },
       );
 
       return {
@@ -645,6 +645,7 @@ export async function getFileStats() {
     total: inMemoryFiles.length,
     newFiles: 0,
     awaiting: 0,
+    pendingEmployee: 0,
     inProgress: 0,
     completed: 0,
     urgent: 0,
@@ -655,10 +656,10 @@ export async function getFileStats() {
     lastSyncedAt: new Date().toISOString(),
   };
   for (const f of inMemoryFiles) {
-    if (f.status === "new") stats.newFiles += 1;
-    if (f.status === "awaiting_direction") stats.awaiting += 1;
+    if (f.status === "new" || f.status === "awaiting_direction" || f.status === "PENDING_AG") stats.awaiting += 1;
+    if (f.status === "PENDING_EMPLOYEE") stats.pendingEmployee += 1;
     if (f.status === "in_progress" || f.status === "directed") stats.inProgress += 1;
-    if (f.status === "completed") stats.completed += 1;
+    if (f.status === "completed" || f.status === "COMPLETED") stats.completed += 1;
     if (f.importance === "urgent") stats.urgent += 1;
     stats.byType[f.fileType] = (stats.byType[f.fileType] || 0) + 1;
   }

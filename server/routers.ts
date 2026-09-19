@@ -31,7 +31,7 @@ import {
   updateLocalUser,
 } from "./db";
 
-const statusValues = ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived"] as const;
+const statusValues = ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived", "PENDING_AG", "PENDING_EMPLOYEE", "COMPLETED"] as const;
 const importanceValues = ["normal", "important", "urgent"] as const;
 const statusSchema = z.enum(statusValues);
 const importanceSchema = z.enum(importanceValues);
@@ -121,11 +121,131 @@ export const appRouter = router({
         const uploaded = await storagePut(`incoming/original/${input.year}/${input.fileNumber}.pdf`, bytes, input.pdfMimeType || "application/pdf");
         originalFileKey = uploaded.key; originalFileUrl = uploaded.url;
       }
-      const file = await createIncomingFile({ fileNumber: input.fileNumber, year: input.year, arrivalDate: new Date(input.arrivalDate), sourceEntity: input.sourceEntity, fileType: input.fileType, subject: input.subject, importance: input.importance, status: "awaiting_direction", originalFileKey, originalFileUrl, originalFileName: input.pdfName, originalMimeType: input.pdfMimeType, notes: input.notes, registeredBy: actorName(ctx), currentResponsible: "رئيس النيابة العامة" });
+      const file = await createIncomingFile({
+        fileNumber: input.fileNumber,
+        year: input.year,
+        arrivalDate: new Date(input.arrivalDate),
+        sourceEntity: input.sourceEntity,
+        fileType: input.fileType,
+        subject: input.subject,
+        importance: input.importance,
+        status: "PENDING_AG",
+        originalFileKey,
+        originalFileUrl,
+        originalFileName: input.pdfName,
+        originalMimeType: input.pdfMimeType,
+        notes: input.notes,
+        registeredBy: actorName(ctx),
+        currentResponsible: "النائب العام للتوجيه والتوقيع (المرحلة الأولى)",
+      });
       if (!file) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر حفظ الملف" });
-      await addFileHistory({ fileId: file.id, actorName: actorName(ctx), actionType: "تسجيل ملف وارد", newStatus: "awaiting_direction", details: "تم تسجيل الملف وإحالته إلى رئيس النيابة العامة" });
-      await createNotification({ recipientOpenId: ENV.ownerOpenId || undefined, recipientRole: "director", fileId: file.id, kind: "new_file", priority: importancePriority(input.importance) as any, title: "ملف وارد جديد", body: `الملف رقم ${file.fileNumber} يحتاج إلى توجيه المدير` });
+      await addFileHistory({
+        fileId: file.id,
+        actorName: actorName(ctx),
+        actionType: "المرحلة الأولى: تسجيل وترحيل للنائب العام",
+        newStatus: "PENDING_AG",
+        details: "تم تسجيل البيانات الأساسية ورفع المرفق وترحيل المعاملة إلى النائب العام للتوجيه والتوقيع",
+      });
+      await createNotification({
+        recipientOpenId: ENV.ownerOpenId || undefined,
+        recipientRole: "director",
+        fileId: file.id,
+        kind: "new_file",
+        priority: importancePriority(input.importance) as any,
+        title: "معاملة وارد جديدة بانتظار توجيه وتوقيع النائب العام",
+        body: `معاملة وارد رقم ${file.fileNumber} محالة للتوجيه والتوقيع (المرحلة الأولى)`,
+      });
       return file;
+    }),
+    directorConfirmAndForward: directorProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      directorInstruction: z.string().min(1, "نص التوجيه مطلوب"),
+      signatureName: z.string().default("فضيلة النائب العام"),
+      signatureTitle: z.string().default("النائب العام للجمهورية"),
+      assignedDepartment: z.string().max(255).optional().nullable(),
+      assignedEmployee: z.string().max(255).optional().nullable(),
+      dueDate: z.string().optional().nullable(),
+      notes: z.string().max(5000).optional().nullable(),
+    })).mutation(async ({ input, ctx }) => {
+      const file = await getIncomingFile(input.fileId);
+      if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
+
+      let originalBytes: Buffer | null = null;
+      if (file.originalFileKey) {
+        originalBytes = await getFileBytes(file.originalFileKey);
+      }
+      if (!originalBytes) {
+        originalBytes = await generateProsecutionPdf(file, "original");
+        const storedOriginal = await storagePut(`incoming/original/${file.year}/${file.fileNumber}.pdf`, originalBytes, "application/pdf");
+        await updateIncomingFile(file.id, {
+          originalFileKey: storedOriginal.key,
+          originalFileUrl: storedOriginal.url,
+        });
+      }
+
+      const signedAt = new Date();
+      const signedBytes = await addSignatureStamp(originalBytes, file.fileNumber, input.signatureName, input.signatureTitle, signedAt);
+      const signed = await storagePut(`incoming/signed/${file.year}/${file.fileNumber}.pdf`, signedBytes, "application/pdf");
+
+      const updated = await updateIncomingFile(input.fileId, {
+        status: "PENDING_EMPLOYEE",
+        isSigned: true,
+        signedFileKey: signed.key,
+        signedFileUrl: signed.url,
+        signatureName: input.signatureName,
+        signatureTitle: input.signatureTitle,
+        signedAt,
+        signedInstruction: input.directorInstruction,
+        directorInstruction: input.directorInstruction,
+        assignedDepartment: input.assignedDepartment !== undefined ? input.assignedDepartment : file.assignedDepartment,
+        assignedEmployee: input.assignedEmployee !== undefined ? input.assignedEmployee : file.assignedEmployee,
+        dueDate: input.dueDate ? new Date(input.dueDate) : file.dueDate,
+        notes: input.notes !== undefined ? input.notes : file.notes,
+        currentResponsible: file.registeredBy || "موظف الاستقبال والتسجيل (المرحلة الثانية: بانتظار تفريغ التوجيه والترحيل النهائي)",
+        directedAt: signedAt,
+      });
+
+      await addFileHistory({
+        fileId: input.fileId,
+        actorName: `${actorName(ctx)} (النائب العام)`,
+        actionType: "مرحلة النائب العام: اعتماد التوجيه والتوقيع",
+        oldStatus: file.status,
+        newStatus: "PENDING_EMPLOYEE",
+        details: `تم توجيه المعاملة والتوقيع والتأكيد إلكترونياً. التوجيه: "${input.directorInstruction}". أُعيدت إلى الموظف لإدخال المرحلة الثانية والترحيل النهائي.`,
+      });
+
+      return updated;
+    }),
+    employeeFinalDispatch: inputProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      finalInstruction: z.string().min(1, "يرجى تفريغ نص توجيه النائب العام"),
+      assignedDepartment: z.string().max(255).optional().nullable(),
+      assignedEmployee: z.string().max(255).optional().nullable(),
+      notes: z.string().max(5000).optional().nullable(),
+    })).mutation(async ({ input, ctx }) => {
+      const current = await getIncomingFile(input.fileId);
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
+
+      const updated = await updateIncomingFile(input.fileId, {
+        status: "COMPLETED",
+        directorInstruction: input.finalInstruction,
+        assignedDepartment: input.assignedDepartment !== undefined ? input.assignedDepartment : current.assignedDepartment,
+        assignedEmployee: input.assignedEmployee !== undefined ? input.assignedEmployee : current.assignedEmployee,
+        notes: input.notes !== undefined ? input.notes : current.notes,
+        completedAt: new Date(),
+        currentResponsible: "قاعدة البيانات العامة (مرحّل نهائياً)",
+      });
+
+      await addFileHistory({
+        fileId: input.fileId,
+        actorName: actorName(ctx),
+        actionType: "المرحلة الثانية: تفريغ التوجيه والترحيل النهائي",
+        oldStatus: current.status,
+        newStatus: "COMPLETED",
+        details: `تم تفريغ توجيه النائب العام: "${input.finalInstruction}" وترحيل المعاملة بشكل نهائي إلى قاعدة البيانات.`,
+      });
+
+      return updated;
     }),
     updateWorkflow: directorProcedure.input(z.object({ fileId: z.number().int().positive(), status: statusSchema.optional(), assignedDepartment: z.string().max(255).optional().nullable(), assignedEmployee: z.string().max(255).optional().nullable(), directorInstruction: z.string().max(5000).optional().nullable(), notes: z.string().max(5000).optional().nullable(), dueDate: z.string().optional().nullable(), actionLabel: z.string().max(255).optional() })).mutation(async ({ input, ctx }) => {
       const current = await getIncomingFile(input.fileId);

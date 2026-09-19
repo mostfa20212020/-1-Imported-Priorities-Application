@@ -26,6 +26,8 @@ import {
   LogOut,
   Menu,
   Paperclip,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   Printer,
@@ -38,6 +40,7 @@ import {
   Signature,
   SlidersHorizontal,
   Sparkles,
+  Tag,
   Trash2,
   UserRound,
   UserCog,
@@ -47,24 +50,34 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  AutoClassificationBanner,
+  PreSaveClassificationReview,
+} from "@/components/AutoClassificationBanner";
 
 const statusLabels: Record<string, string> = {
   new: "جديد",
-  awaiting_direction: "بانتظار توجيه المدير",
-  directed: "موجّه",
+  PENDING_AG: "بانتظار توجيه وتوقيع النائب العام",
+  awaiting_direction: "بانتظار توجيه النائب العام",
+  PENDING_EMPLOYEE: "بانتظار إدخال التوجيه والترحيل النهائي",
+  directed: "موجّه ومحال",
   in_progress: "قيد التنفيذ",
   returned: "معاد للمتابعة",
   completed: "مكتمل",
+  COMPLETED: "مرحّل نهائياً لقاعدة البيانات",
   archived: "مؤرشف",
 };
 const importanceLabels: Record<string, string> = { normal: "عادي", important: "مهم", urgent: "عاجل" };
 const statusColors: Record<string, string> = {
   new: "status-blue",
+  PENDING_AG: "status-amber",
   awaiting_direction: "status-amber",
+  PENDING_EMPLOYEE: "status-purple",
   directed: "status-indigo",
   in_progress: "status-purple",
   returned: "status-orange",
   completed: "status-green",
+  COMPLETED: "status-green",
   archived: "status-slate",
 };
 const importanceColors: Record<string, string> = { normal: "importance-normal", important: "importance-important", urgent: "importance-urgent" };
@@ -127,6 +140,23 @@ export default function Home() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("alawliyat_sidebar_collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebarCollapse = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("alawliyat_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -157,13 +187,23 @@ export default function Home() {
 
   return (
     <div className="app-shell" dir="rtl">
-      <aside className={`app-sidebar ${mobileNav ? "open" : ""}`}>
+      <aside className={`app-sidebar ${mobileNav ? "open" : ""} ${isSidebarCollapsed ? "collapsed" : ""}`}>
         <div className="brand-block">
-          <div className="brand-mark"><ScaleMark /></div>
-          <div>
+          <div className="brand-mark" onClick={toggleSidebarCollapse} title={isSidebarCollapsed ? "توسيع القائمة" : "إدارة الأوليات"}>
+            <ScaleMark />
+          </div>
+          <div className="brand-info">
             <div className="brand-name">إدارة الأوليات</div>
             <div className="brand-org">النيابة العامة</div>
           </div>
+          <button
+            className="sidebar-collapse-toggle"
+            onClick={toggleSidebarCollapse}
+            title={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طي القائمة الجانبية"}
+            aria-label={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طي القائمة الجانبية"}
+          >
+            {isSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
           <button className="sidebar-close" onClick={() => setMobileNav(false)} aria-label="إغلاق القائمة"><X size={18} /></button>
         </div>
 
@@ -260,6 +300,14 @@ export default function Home() {
         <header className="topbar">
           <div className="topbar-start">
             <button className="mobile-menu icon-button" onClick={() => setMobileNav(true)} aria-label="فتح القائمة"><Menu size={20} /></button>
+            <button
+              className="desktop-collapse-toggle icon-button"
+              onClick={toggleSidebarCollapse}
+              title={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طي القائمة الجانبية"}
+              aria-label={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طي القائمة الجانبية"}
+            >
+              {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
             <div className="breadcrumb"><span>النيابة العامة</span><ChevronLeft size={15} /><strong>{viewTitle(activeView, userRole)}</strong></div>
           </div>
           <div className="topbar-actions">
@@ -328,12 +376,11 @@ export default function Home() {
           {activeView === "register" && canRegisterNew && (
             <RegisterView
               inline
+              files={sortedFiles}
+              onOpen={(id) => setSelectedId(id)}
               onSaved={() => {
                 filesQuery.refetch();
                 statsQuery.refetch();
-                if (isReception) {
-                  setActiveView("receiving");
-                }
               }}
             />
           )}
@@ -404,7 +451,18 @@ function viewTitle(view: ViewKey, role?: string) {
 }
 
 function NavButton({ icon, label, active, badge, onClick }: { icon: React.ReactNode; label: string; active?: boolean; badge?: string; onClick: () => void }) {
-  return <button className={`nav-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span>{badge && <em>{badge}</em>}</button>;
+  return (
+    <button
+      className={`nav-button ${active ? "active" : ""}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      <span className="nav-button-icon">{icon}</span>
+      <span className="nav-button-text">{label}</span>
+      {badge && <em>{badge}</em>}
+    </button>
+  );
 }
 
 function DirectorQuickFilters({ files, search, status, importance, fileType, sourceEntity, sortBy, setSearch, setStatus, setImportance, setFileType, setSourceEntity, setSortBy, clear }: { files: any[]; search: string; status: string; importance: string; fileType: string; sourceEntity: string; sortBy: string; setSearch: (value: string) => void; setStatus: (value: string) => void; setImportance: (value: string) => void; setFileType: (value: string) => void; setSourceEntity: (value: string) => void; setSortBy: (value: "date_desc" | "date_asc" | "priority") => void; clear: () => void }) {
@@ -730,31 +788,598 @@ function EmptyFiles({ onRegister }: { onRegister: () => void }) {
 function FileRow({ file, onOpen }: { file: any; onOpen: (id: number) => void }) { return <button className="file-row reception-file-card" onClick={() => onOpen(file.id)}><div className="file-row-main"><div className={`file-type-icon ${file.importance === "urgent" ? "urgent" : ""}`}><FileText size={20} /></div><div className="file-row-copy"><strong>وارد رقم {file.fileNumber} <span className={`importance-tag ${importanceColors[file.importance]}`}>{importanceLabels[file.importance]}</span></strong><span className="reception-subject">{file.subject}</span><small className="reception-meta"><b>جهة الورود:</b> {file.sourceEntity} <i>·</i> <b>التاريخ:</b> {formatDate(file.arrivalDate)}</small><small className="reception-type">{file.fileType}</small></div></div><div className="file-row-end"><span className={`status-badge ${statusColors[file.status]}`}>{statusLabels[file.status]}</span><ChevronLeft size={17} /></div></button>;
 }
 
-function RegisterView({ inline, onSaved }: { inline?: boolean; onSaved: () => void }) {
-  return <div className={inline ? "register-page" : ""}><div className="section-heading"><div><div className="eyebrow">تسجيل واستقبال</div><h1>تسجيل وارد جديد</h1><p>أدخل بيانات الملف مرة واحدة وسيظهر تلقائيًا في لوحة رئيس النيابة العامة.</p></div></div><RegisterForm onSaved={onSaved} /></div>;
+function RegisterView({
+  inline,
+  onSaved,
+  files = [],
+  onOpen,
+}: {
+  inline?: boolean;
+  onSaved: () => void;
+  files?: any[];
+  onOpen?: (id: number) => void;
+}) {
+  const [activeStage, setActiveStage] = useState<"stage1" | "stage2">("stage1");
+  const pendingEmployeeFiles = files.filter((f) => f.status === "PENDING_EMPLOYEE");
+
+  return (
+    <div className={inline ? "register-page" : ""}>
+      <div className="section-heading">
+        <div>
+          <div className="eyebrow">تسجيل واستقبال</div>
+          <h1>{activeStage === "stage1" ? "تسجيل وارد جديد" : "قائمة الوارد بعد التوجيه"}</h1>
+          <p>
+            {activeStage === "stage1"
+              ? "أدخل بيانات الوارد وسيتم ترحيله مباشرة إلى لوحة النائب العام للتوجيه والاعتماد."
+              : "قائمة المعاملات المعتمدة من النائب العام: اختر المعاملة لاستكمال الإجراءات والترحيل النهائي."}
+          </p>
+        </div>
+      </div>
+
+      {/* Stage Switcher Tabs */}
+      <div className="workflow-stage-nav">
+        <button
+          type="button"
+          className={`workflow-tab-btn ${activeStage === "stage1" ? "active" : ""}`}
+          onClick={() => setActiveStage("stage1")}
+        >
+          <FileInput size={17} />
+          <span>تسجيل وارد جديد وترحيله للنائب العام</span>
+        </button>
+
+        <button
+          type="button"
+          className={`workflow-tab-btn ${activeStage === "stage2" ? "active" : ""}`}
+          onClick={() => setActiveStage("stage2")}
+        >
+          <CheckCircle2 size={17} />
+          <span>قائمة بعد التوجيه (استكمال الإجراءات والترحيل)</span>
+          {pendingEmployeeFiles.length > 0 ? (
+            <span className="workflow-tab-badge highlight">
+              {pendingEmployeeFiles.length} معاملة جاهزة
+            </span>
+          ) : (
+            <span className="workflow-tab-badge">0</span>
+          )}
+        </button>
+      </div>
+
+      {activeStage === "stage1" ? (
+        <RegisterForm
+          onSaved={() => {
+            onSaved();
+            // Automatically switch to the "قائمة بعد التوجيه" after completing dispatch to the AG
+            setActiveStage("stage2");
+          }}
+        />
+      ) : (
+        <PendingEmployeeStageView
+          files={pendingEmployeeFiles}
+          onSaved={onSaved}
+          onOpen={onOpen}
+          onNewRegister={() => setActiveStage("stage1")}
+        />
+      )}
+    </div>
+  );
+}
+
+function PendingEmployeeStageView({
+  files,
+  onSaved,
+  onOpen,
+  onNewRegister,
+}: {
+  files: any[];
+  onSaved: () => void;
+  onOpen?: (id: number) => void;
+  onNewRegister?: () => void;
+}) {
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(files[0]?.id || null);
+
+  useEffect(() => {
+    if (files.length > 0) {
+      if (!selectedFileId || !files.some((f) => f.id === selectedFileId)) {
+        setSelectedFileId(files[0].id);
+      }
+    } else {
+      setSelectedFileId(null);
+    }
+  }, [files, selectedFileId]);
+
+  if (files.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="empty-icon">
+          <CheckCircle2 size={28} color="#16a34a" />
+        </div>
+        <strong>لا توجد معاملات في قائمة بعد التوجيه حالياً</strong>
+        <span style={{ maxWidth: "500px", margin: "0 auto" }}>
+          عندما يقوم فضيلة النائب العام بتوجيه واعتماد أي معاملة واردة إلكترونياً، ستظهر هنا فوراً في قائمة بعد التوجيه ليتم اختيارها واستكمال إجراءات تفريغ التوجيه والترحيل النهائي إلى قاعدة البيانات (COMPLETED).
+        </span>
+        {onNewRegister && (
+          <div style={{ marginTop: "16px" }}>
+            <button
+              type="button"
+              className="primary-button small"
+              onClick={onNewRegister}
+            >
+              <FileInput size={15} /> تسجيل وارد جديد آخر
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const currentSelectedFile = files.find((f) => f.id === selectedFileId) || files[0];
+
+  return (
+    <div>
+      {/* قائمة اختيار الوارد بعد التوجيه */}
+      <div className="pending-selection-container">
+        <div className="pending-selection-header">
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <FileText size={18} color="#1c5563" />
+            <strong style={{ fontSize: "13.5px", color: "#163e46" }}>
+              قائمة الوارد بعد التوجيه ({files.length} معاملة جاهزة لإكمال الإجراءات)
+            </strong>
+          </div>
+          <span style={{ fontSize: "11.5px", color: "#54756f" }}>
+            اختر أي وارد من القائمة لتفريغ التوجيه وإكمال الترحيل النهائي
+          </span>
+        </div>
+
+        <div className="pending-selection-grid">
+          {files.map((file) => {
+            const isSelected = file.id === currentSelectedFile?.id;
+            return (
+              <button
+                type="button"
+                key={file.id}
+                className={`pending-selection-item ${isSelected ? "active" : ""}`}
+                onClick={() => setSelectedFileId(file.id)}
+              >
+                <div className="pending-item-top">
+                  <span className="pending-item-number">وارد رقم {file.fileNumber} ({file.year})</span>
+                  <span className={`status-badge ${statusColors[file.status]}`}>{statusLabels[file.status]}</span>
+                </div>
+                <div className="pending-item-subject" title={file.subject}>{file.subject}</div>
+                <div className="pending-item-meta">
+                  <span><b>الجهة:</b> {file.sourceEntity}</span>
+                  {file.signedAt && (
+                    <span><Clock3 size={11} style={{ display: "inline", verticalAlign: "middle", marginLeft: "3px" }} />{formatDate(file.signedAt)}</span>
+                  )}
+                </div>
+                {isSelected ? (
+                  <div className="pending-item-selected-tag">
+                    <CheckCircle2 size={13} /> المعاملة المختارة حالياً
+                  </div>
+                ) : (
+                  <div className="pending-item-action-tag">
+                    <span>اضغط للاختيار وإكمال الإجراءات ←</span>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {currentSelectedFile && (
+        <div style={{ marginTop: "16px" }}>
+          <PendingEmployeeDispatchCard
+            key={currentSelectedFile.id}
+            file={currentSelectedFile}
+            onSaved={onSaved}
+            onOpen={onOpen}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PendingEmployeeDispatchCard({
+  file,
+  onSaved,
+  onOpen,
+}: {
+  file: any;
+  onSaved: () => void;
+  onOpen?: (id: number) => void;
+}) {
+  const [instruction, setInstruction] = useState(file.directorInstruction || file.signedInstruction || "");
+  const [department, setDepartment] = useState(file.assignedDepartment || "");
+  const [employee, setEmployee] = useState(file.assignedEmployee || "");
+  const [notes, setNotes] = useState(file.notes || "");
+  const [pdfPreviewType, setPdfPreviewType] = useState<"original" | "signed" | null>(null);
+
+  const dispatchMutation = trpc.files.employeeFinalDispatch.useMutation({
+    onSuccess: () => {
+      toast.success(`تم ترحيل المعاملة رقم ${file.fileNumber} بشكل نهائي إلى قاعدة البيانات (COMPLETED)`);
+      onSaved();
+    },
+    onError: (error) => toast.error(error.message || "تعذر ترحيل المعاملة"),
+  });
+
+  const handleFinalDispatch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!instruction.trim()) {
+      toast.error("يرجى تفريغ أو إدخال نص توجيه النائب العام قبل الترحيل النهائي");
+      return;
+    }
+    dispatchMutation.mutate({
+      fileId: file.id,
+      finalInstruction: instruction,
+      assignedDepartment: department || undefined,
+      assignedEmployee: employee || undefined,
+      notes: notes || undefined,
+    });
+  };
+
+  return (
+    <div className="pending-dispatch-card">
+      <div className="pending-dispatch-header">
+        <div className="pending-dispatch-title">
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span className={`status-badge ${statusColors[file.status]}`}>{statusLabels[file.status]}</span>
+            <span className={`importance-tag ${importanceColors[file.importance]}`}>{importanceLabels[file.importance]}</span>
+            <span className="reception-type">{file.fileType}</span>
+          </div>
+          <strong>وارد رقم {file.fileNumber} ({file.year}) — {file.subject}</strong>
+          <span>
+            <b>جهة الورود:</b> {file.sourceEntity} <i>·</i> <b>تاريخ الوصول:</b> {formatDate(file.arrivalDate)}
+          </span>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {onOpen && (
+            <button
+              type="button"
+              className="outline-button small"
+              onClick={() => onOpen(file.id)}
+            >
+              <Eye size={14} /> تفاصيل الملف
+            </button>
+          )}
+          {file.isSigned && (
+            <button
+              type="button"
+              className="outline-button small"
+              style={{ color: "#1b5e4f", borderColor: "#9ec5b8" }}
+              onClick={() => setPdfPreviewType("signed")}
+            >
+              <Signature size={14} /> معاينة الوثيقة الموقعة (PDF)
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Quote card of the director's instructions & electronic signature */}
+      <div className="instruction-quote-card">
+        <div className="instruction-quote-header">
+          <strong>
+            <Signature size={16} />
+            توجيه واعتماد فضيلة النائب العام للجمهورية
+          </strong>
+          {file.signedAt && (
+            <span style={{ fontSize: "11px", color: "#8c6e26" }}>
+              <Clock3 size={12} style={{ display: "inline", verticalAlign: "middle", marginLeft: "4px" }} />
+              بتاريخ: {formatDateTime(file.signedAt)}
+            </span>
+          )}
+        </div>
+        <div className="instruction-quote-text">
+          {file.signedInstruction || file.directorInstruction || "لا يوجد نص توجيه مدون"}
+        </div>
+        <div className="instruction-quote-signer">
+          الموقع إلكترونياً: {file.signatureName || "فضيلة النائب العام"} — {file.signatureTitle || "النائب العام للجمهورية"}
+        </div>
+      </div>
+
+      {/* Form for employee final entry and dispatch */}
+      <form className="final-dispatch-form" onSubmit={handleFinalDispatch}>
+        <div style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "6px" }}>
+          <CheckCircle2 size={16} color="#1b5e4f" />
+          <strong style={{ fontSize: "12px", color: "#194d42" }}>
+            نموذج تفريغ توجيه النائب العام والترحيل النهائي لقاعدة البيانات
+          </strong>
+        </div>
+
+        <div className="form-grid">
+          <Field label="تفريغ نص توجيه النائب العام (للحفظ الدائم)" required wide>
+            <textarea
+              rows={3}
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder="اكتب أو أكد نص توجيه النائب العام المفرّغ من الوثيقة الموقعة..."
+            />
+          </Field>
+          <Field label="القسم / الإدارة المحال إليها">
+            <input
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              placeholder="مثال: إدارة التفتيش القضائي، المكتب الفني..."
+            />
+          </Field>
+          <Field label="الموظف / العضو المختص">
+            <input
+              value={employee}
+              onChange={(e) => setEmployee(e.target.value)}
+              placeholder="اسم الموظف أو العضو المكلف..."
+            />
+          </Field>
+          <Field label="ملاحظات الترحيل النهائي" wide>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="أي ملاحظات ختامية للوارد قبل الأرشفة الدائمة..."
+            />
+          </Field>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px", flexWrap: "wrap", gap: "10px" }}>
+          <span style={{ fontSize: "11px", color: "#63837b" }}>
+            <ShieldCheck size={14} style={{ display: "inline", verticalAlign: "middle", marginLeft: "4px" }} />
+            الضغط على الترحيل النهائي يغير حالة المعاملة إلى (COMPLETED) ويثبتها في السجل الرسمي لقاعدة البيانات
+          </span>
+
+          <button
+            type="submit"
+            className="final-dispatch-btn"
+            disabled={dispatchMutation.isPending}
+          >
+            {dispatchMutation.isPending ? (
+              <>
+                <RefreshCw size={15} className="spin" />
+                جاري الترحيل النهائي...
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} />
+                ترحيل نهائي إلى قاعدة البيانات (COMPLETED)
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {pdfPreviewType && (
+        <PdfViewerModal
+          file={file}
+          initialType={pdfPreviewType}
+          onClose={() => setPdfPreviewType(null)}
+        />
+      )}
+    </div>
+  );
 }
 
 function RegisterModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  return <div className="modal-backdrop"><div className="modal-card register-modal"><div className="modal-heading"><div><h2>تسجيل وارد جديد</h2><span>سيتم حفظ الملف وربطه بسجل الحركة تلقائيًا</span></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><RegisterForm onSaved={onSaved} /></div></div>;
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card register-modal">
+        <div className="modal-heading">
+          <div>
+            <h2>تسجيل وارد جديد</h2>
+            <span>سيتم حفظ الملف وترحيله مباشرة للنائب العام للتوجيه والتوقيع (PENDING_AG)</span>
+          </div>
+          <button className="icon-button" onClick={onClose}><X size={19} /></button>
+        </div>
+        <RegisterForm onSaved={onSaved} />
+      </div>
+    </div>
+  );
 }
 
 function RegisterForm({ onSaved }: { onSaved: () => void }) {
-  const [form, setForm] = useState({ fileNumber: "", year: "2026", arrivalDate: new Date().toISOString().slice(0, 10), sourceEntity: "", fileType: "وارد إداري", subject: "", importance: "normal", notes: "" });
+  const [form, setForm] = useState({
+    fileNumber: "",
+    year: "2026",
+    arrivalDate: new Date().toISOString().slice(0, 10),
+    sourceEntity: "",
+    fileType: "وارد عام",
+    subject: "",
+    importance: "normal",
+    notes: "",
+  });
   const [pdf, setPdf] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const createMutation = trpc.files.create.useMutation({ onSuccess: () => { toast.success("تم تسجيل الملف وإحالته إلى المدير"); onSaved(); }, onError: (error) => toast.error(error.message || "تعذر حفظ الملف") });
+  const createMutation = trpc.files.create.useMutation({
+    onSuccess: () => {
+      toast.success("تم تسجيل الوارد وترحيله بنجاح إلى النائب العام للتوجيه والتوقيع (PENDING_AG)");
+      setForm({
+        fileNumber: "",
+        year: "2026",
+        arrivalDate: new Date().toISOString().slice(0, 10),
+        sourceEntity: "",
+        fileType: "وارد عام",
+        subject: "",
+        importance: "normal",
+        notes: "",
+      });
+      setPdf(null);
+      onSaved();
+    },
+    onError: (error) => toast.error(error.message || "تعذر حفظ الملف"),
+  });
   const setField = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!form.fileNumber || !form.sourceEntity || !form.subject) { toast.error("أكمل رقم الملف والجهة والموضوع أولًا"); return; }
+    if (!form.fileNumber || !form.sourceEntity || !form.subject) {
+      toast.error("أكمل رقم الملف والجهة والموضوع أولًا");
+      return;
+    }
     let pdfBase64: string | undefined;
     if (pdf) {
-      if (pdf.size > 8 * 1024 * 1024) { toast.error("الحد الأقصى للمرفق 8 ميجابايت"); return; }
+      if (pdf.size > 8 * 1024 * 1024) {
+        toast.error("الحد الأقصى للمرفق 8 ميجابايت");
+        return;
+      }
       pdfBase64 = await readFileAsBase64(pdf);
     }
-    createMutation.mutate({ ...form, fileType: form.fileType as "وارد عام" | "وارد مكاتبات" | "وارد شكاوي" | "وارد رئاسي" | "وارد خاص", year: Number(form.year), importance: form.importance as "normal" | "important" | "urgent", pdfBase64, pdfName: pdf?.name, pdfMimeType: pdf?.type || "application/pdf" });
+    createMutation.mutate({
+      ...form,
+      fileType: form.fileType as "وارد عام" | "وارد مكاتبات" | "وارد شكاوي" | "وارد رئاسي" | "وارد خاص",
+      year: Number(form.year),
+      importance: form.importance as "normal" | "important" | "urgent",
+      pdfBase64,
+      pdfName: pdf?.name,
+      pdfMimeType: pdf?.type || "application/pdf",
+    });
   };
-  return <form className="form-card" onSubmit={submit}><div className="form-section-title"><span className="number-chip">١</span><div><h3>بيانات الوارد الأساسية</h3><span>المعلومات التي ستظهر في كل مراحل المتابعة</span></div></div><div className="form-grid"><Field label="رقم الوارد" required><input value={form.fileNumber} onChange={(e) => setField("fileNumber", e.target.value)} placeholder="مثال: ١٢٣ / ٢٠٢٦" /></Field><Field label="السنة" required><input type="number" value={form.year} onChange={(e) => setField("year", e.target.value)} /></Field><Field label="تاريخ الوصول" required><input type="date" value={form.arrivalDate} onChange={(e) => setField("arrivalDate", e.target.value)} /></Field><Field label="جهة الورود" required><input value={form.sourceEntity} onChange={(e) => setField("sourceEntity", e.target.value)} placeholder="اسم الجهة أو المؤسسة" /></Field><Field label="نوع الوارد" required><select value={form.fileType} onChange={(e) => setField("fileType", e.target.value)}><option value="">اختر نوع الوارد</option><option value="وارد عام">١ ـ وارد عام</option><option value="وارد مكاتبات">٢ ـ وارد مكاتبات</option><option value="وارد شكاوي">٣ ـ وارد شكاوي</option><option value="وارد رئاسي">٤ ـ وارد رئاسي</option><option value="وارد خاص">٥ ـ وارد خاص</option></select></Field><Field label="موضوع الوارد" required wide><input value={form.subject} onChange={(e) => setField("subject", e.target.value)} placeholder="اكتب موضوع الوارد بوضوح واختصار" /></Field></div><div className="form-section-title form-section-second"><span className="number-chip">٢</span><div><h3>الأهمية والمرفقات</h3><span>ساعد المدير على ترتيب الأولويات من النظرة الأولى</span></div></div><div className="form-grid"><Field label="مستوى الأهمية" wide><div className="importance-picker">{Object.entries(importanceLabels).map(([key, label]) => <button type="button" key={key} className={`importance-option ${form.importance === key ? "selected" : ""} ${importanceColors[key]}`} onClick={() => setField("importance", key)}><span className="importance-radio" /><strong>{label}</strong><small>{key === "urgent" ? "يتطلب إجراءً سريعًا" : key === "important" ? "أولوية متابعة" : "معالجة اعتيادية"}</small></button>)}</div></Field><Field label="الملف الأصلي PDF" wide><div className={`upload-box ${pdf ? "has-file" : ""}`} onClick={() => inputRef.current?.click()}><input ref={inputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => setPdf(e.target.files?.[0] || null)} />{pdf ? <><div className="upload-file-icon"><FileCheck2 size={20} /></div><div><strong>{pdf.name}</strong><span>{(pdf.size / 1024 / 1024).toFixed(2)} ميجابايت · جاهز للرفع</span></div><button type="button" className="remove-file" onClick={(e) => { e.stopPropagation(); setPdf(null); }}><X size={15} /></button></> : <><div className="upload-icon"><ArrowDownToLine size={20} /></div><div><strong>اسحب ملف PDF هنا أو اضغط للاختيار</strong><span>يتم حفظ النسخة الأصلية دون تغيير · حد أقصى 8 ميجابايت</span></div></>}</div></Field><Field label="ملاحظات أولية" wide><textarea value={form.notes} onChange={(e) => setField("notes", e.target.value)} rows={3} placeholder="أي ملاحظات تفيد المدير عند المراجعة..." /></Field></div><div className="form-actions"><span className="form-hint"><ShieldCheck size={16} /> المعلومات محفوظة ضمن سجل موثوق</span><button type="submit" className="primary-button" disabled={createMutation.isPending}>{createMutation.isPending ? <><RefreshCw size={16} className="spin" /> جاري الحفظ...</> : <><Send size={16} /> حفظ وإحالة للمدير</>}</button></div></form>;
+
+  return (
+    <form className="form-card" onSubmit={submit}>
+      <div style={{ background: "#fdf8ee", border: "1px solid #f6e0b5", borderRadius: "8px", padding: "12px 14px", marginBottom: "18px", display: "flex", alignItems: "center", gap: "10px" }}>
+        <Clock3 size={20} color="#b45309" />
+        <div>
+          <strong style={{ color: "#92400e", fontSize: "12.5px", display: "block" }}>
+            المرحلة الأولى: تسجيل الوارد وترحيله إلى النائب العام
+          </strong>
+          <span style={{ color: "#78350f", fontSize: "11.5px" }}>
+            بمجرد إدخال البيانات ورفع المرفق والضغط على حفظ، سيتم تسجيل المعاملة تلقائياً بحالة (PENDING_AG) وإحالتها إلى لوحة النائب العام للتوجيه والتوقيع.
+          </span>
+        </div>
+      </div>
+
+      <div className="form-section-title">
+        <span className="number-chip">١</span>
+        <div>
+          <h3>بيانات الوارد الأساسية</h3>
+          <span>المعلومات التي ستظهر للنائب العام أثناء المراجعة والتوجيه</span>
+        </div>
+      </div>
+      <div className="form-grid">
+        <Field label="رقم الوارد" required>
+          <input value={form.fileNumber} onChange={(e) => setField("fileNumber", e.target.value)} placeholder="مثال: ١٢٣ / ٢٠٢٦" />
+        </Field>
+        <Field label="السنة" required>
+          <input type="number" value={form.year} onChange={(e) => setField("year", e.target.value)} />
+        </Field>
+        <Field label="تاريخ الوصول" required>
+          <input type="date" value={form.arrivalDate} onChange={(e) => setField("arrivalDate", e.target.value)} />
+        </Field>
+        <Field label="جهة الورود" required>
+          <input value={form.sourceEntity} onChange={(e) => setField("sourceEntity", e.target.value)} placeholder="اسم الجهة أو المؤسسة" />
+        </Field>
+        <Field label="موضوع الوارد (العنوان)" required wide>
+          <input
+            value={form.subject}
+            onChange={(e) => setField("subject", e.target.value)}
+            placeholder="اكتب موضوع أو عنوان الوارد بوضوح (مثال: شكوى المواطن، مذكرة إيضاحية، كتاب دوري، طلب...)"
+          />
+        </Field>
+
+        {/* عرض التصنيف المقترح تلقائياً بناءً على الكلمات المفتاحية في العنوان */}
+        <AutoClassificationBanner
+          subject={form.subject}
+          currentFileType={form.fileType}
+          currentImportance={form.importance}
+          onApply={(suggestedType, suggestedImportance) => {
+            setForm((prev) => ({
+              ...prev,
+              fileType: suggestedType,
+              ...(suggestedImportance ? { importance: suggestedImportance } : {}),
+            }));
+            toast.success(`تم تطبيق التصنيف المقترح: ${suggestedType}`);
+          }}
+        />
+
+        <Field label="نوع الوارد" required wide>
+          <select value={form.fileType} onChange={(e) => setField("fileType", e.target.value)}>
+            <option value="">اختر نوع الوارد</option>
+            <option value="وارد عام">١ ـ وارد عام</option>
+            <option value="وارد مكاتبات">٢ ـ وارد مكاتبات</option>
+            <option value="وارد شكاوي">٣ ـ وارد شكاوي</option>
+            <option value="وارد رئاسي">٤ ـ وارد رئاسي</option>
+            <option value="وارد خاص">٥ ـ وارد خاص</option>
+          </select>
+        </Field>
+      </div>
+      <div className="form-section-title form-section-second">
+        <span className="number-chip">٢</span>
+        <div>
+          <h3>الأهمية والمرفقات</h3>
+          <span>المستند الأصلي لتمكين النائب العام من المراجعة والتوقيع الإلكتروني</span>
+        </div>
+      </div>
+      <div className="form-grid">
+        <Field label="مستوى الأهمية" wide>
+          <div className="importance-picker">
+            {Object.entries(importanceLabels).map(([key, label]) => (
+              <button
+                type="button"
+                key={key}
+                className={`importance-option ${form.importance === key ? "selected" : ""} ${importanceColors[key]}`}
+                onClick={() => setField("importance", key)}
+              >
+                <span className="importance-radio" />
+                <strong>{label}</strong>
+                <small>{key === "urgent" ? "يتطلب إجراءً سريعًا" : key === "important" ? "أولوية متابعة" : "معالجة اعتيادية"}</small>
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="الملف الأصلي PDF (المرفق)" wide>
+          <div className={`upload-box ${pdf ? "has-file" : ""}`} onClick={() => inputRef.current?.click()}>
+            <input ref={inputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => setPdf(e.target.files?.[0] || null)} />
+            {pdf ? (
+              <>
+                <div className="upload-file-icon"><FileCheck2 size={20} /></div>
+                <div>
+                  <strong>{pdf.name}</strong>
+                  <span>{(pdf.size / 1024 / 1024).toFixed(2)} ميجابايت · جاهز للرفع والترحيل</span>
+                </div>
+                <button type="button" className="remove-file" onClick={(e) => { e.stopPropagation(); setPdf(null); }}>
+                  <X size={15} />
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="upload-icon"><ArrowDownToLine size={20} /></div>
+                <div>
+                  <strong>اسحب ملف PDF هنا أو اضغط للاختيار</strong>
+                  <span>يتم حفظ النسخة الأصلية للنائب العام ليقوم بالتوجيه والتوقيع عليها</span>
+                </div>
+              </>
+            )}
+          </div>
+        </Field>
+        <Field label="ملاحظات أولية للموظف" wide>
+          <textarea value={form.notes} onChange={(e) => setField("notes", e.target.value)} rows={3} placeholder="أي ملاحظات تفيد النائب العام عند المراجعة..." />
+        </Field>
+      </div>
+
+      {/* مراجعة وعرض التصنيف المقترح للمستخدم قبل الحفظ والترحيل */}
+      <PreSaveClassificationReview
+        subject={form.subject}
+        selectedFileType={form.fileType}
+        selectedImportance={form.importance}
+        onApplySuggested={(suggestedType, suggestedImportance) => {
+          setForm((prev) => ({
+            ...prev,
+            fileType: suggestedType,
+            ...(suggestedImportance ? { importance: suggestedImportance } : {}),
+          }));
+          toast.success(`تم اعتماد التصنيف المقترح: ${suggestedType}`);
+        }}
+      />
+
+      <div className="form-actions">
+        <span className="form-hint"><ShieldCheck size={16} /> ترحيل مباشر إلى لوحة النائب العام بحالة PENDING_AG</span>
+        <button type="submit" className="primary-button" disabled={createMutation.isPending}>
+          {createMutation.isPending ? (
+            <><RefreshCw size={16} className="spin" /> جاري الحفظ والترحيل...</>
+          ) : (
+            <><Send size={16} /> حفظ وترحيل إلى النائب العام (PENDING_AG)</>
+          )}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 function Field({ label, required, wide, children }: { label: string; required?: boolean; wide?: boolean; children: React.ReactNode }) { return <label className={`field ${wide ? "wide" : ""}`}><span>{label}{required && <b>*</b>}</span>{children}</label>; }
@@ -1078,6 +1703,116 @@ function PdfViewerModal({ file, initialType = "original", onClose }: { file: any
   );
 }
 
+/**
+ * مكون مسار سير عمل المعاملة المرئي (Timeline)
+ * يوضح المراحل الأربعة:
+ * ١. مسودة / تسجيل الوارد
+ * ٢. بانتظار توقيع النائب العام
+ * ٣. بانتظار التوجيه وتفريغ المعاملة
+ * ٤. مكتملة ومرحّلة نهائياً
+ */
+function TransactionWorkflowTimeline({ file }: { file: any }) {
+  // Determine current step index (0 to 3) based on status and signature
+  // Step 0: مسودة / قيد التسجيل
+  // Step 1: بانتظار توقيع النائب العام (PENDING_AG / awaiting_direction)
+  // Step 2: بانتظار التوجيه وتفريغ المعاملة (PENDING_EMPLOYEE)
+  // Step 3: مكتملة ومرحّلة نهائياً (COMPLETED / completed)
+  let currentStepIndex = 1;
+
+  if (file.status === "new") {
+    currentStepIndex = 0;
+  } else if (file.status === "PENDING_AG" || file.status === "awaiting_direction") {
+    currentStepIndex = 1;
+  } else if (file.status === "PENDING_EMPLOYEE") {
+    currentStepIndex = 2;
+  } else if (file.status === "COMPLETED" || file.status === "completed" || file.status === "directed") {
+    currentStepIndex = 3;
+  }
+
+  const steps = [
+    {
+      num: "١",
+      title: "مسودة الوارد",
+      desc: "تسجيل البيانات الأساسية للوارد ورفع المستند الأصلي المرفق",
+      icon: <FileInput size={15} />,
+      statusTag: currentStepIndex > 0 ? "مكتملة" : "قيد الإدخال",
+      meta: file.arrivalDate ? `التسجيل: ${formatDate(file.arrivalDate)}` : undefined,
+    },
+    {
+      num: "٢",
+      title: "بانتظار توقيع النائب العام",
+      desc: "مراجعة فضيلة النائب العام، صياغة التوجيه والختم بالتوقيع الإلكتروني",
+      icon: <Signature size={15} />,
+      statusTag: currentStepIndex > 1 ? "تم التوقيع" : currentStepIndex === 1 ? "المرحلة الحالية" : "قادمة",
+      meta: file.isSigned && file.signedAt ? `تم التوقيع: ${formatDate(file.signedAt)}` : undefined,
+    },
+    {
+      num: "٣",
+      title: "بانتظار التوجيه",
+      desc: "تفريغ توجيه النائب العام من قبل الموظف وتحديد جهة الإحالة والمكلف",
+      icon: <FilePenLine size={15} />,
+      statusTag: currentStepIndex > 2 ? "تم التفريغ" : currentStepIndex === 2 ? "المرحلة الحالية" : "قادمة",
+      meta: file.directorInstruction || file.signedInstruction ? "التوجيه متوفر" : undefined,
+    },
+    {
+      num: "٤",
+      title: "مكتملة ومرحّلة",
+      desc: "الترحيل النهائي والتثبيت في السجل القضائي لقاعدة البيانات (COMPLETED)",
+      icon: <CheckCircle2 size={15} />,
+      statusTag: currentStepIndex >= 3 ? "مكتملة نهائياً" : "بانتظار الترحيل",
+      meta: currentStepIndex >= 3 ? (file.assignedDepartment ? `أحيلت: ${file.assignedDepartment}` : "محفوظة رسمياً") : undefined,
+    },
+  ];
+
+  return (
+    <div className="transaction-workflow-timeline-wrapper">
+      <div className="transaction-workflow-header">
+        <div className="transaction-workflow-header-title">
+          <History size={17} color="#1c5563" />
+          <strong>مسار سير عمل المعاملة (Workflow Timeline)</strong>
+          <span>المراحل الإجرائية المتتابعة من الإدخال حتى الترحيل النهائي</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "11px", color: "#61817c" }}>المرحلة الحالية:</span>
+          <span className={`status-badge ${statusColors[file.status]}`}>
+            {statusLabels[file.status] || file.status}
+          </span>
+        </div>
+      </div>
+
+      <div className="transaction-workflow-track">
+        {steps.map((step, idx) => {
+          const isCompleted = idx < currentStepIndex;
+          const isCurrent = idx === currentStepIndex;
+          const isUpcoming = idx > currentStepIndex;
+          const nodeClass = isCompleted ? "completed" : isCurrent ? "current" : "upcoming";
+
+          return (
+            <div key={step.title} className={`workflow-node-card ${nodeClass}`}>
+              <div className="workflow-node-top">
+                <div className="workflow-node-badge">
+                  {isCompleted ? <Check size={14} /> : step.icon}
+                </div>
+                <span className="workflow-node-status-tag">{step.statusTag}</span>
+              </div>
+              <div className="workflow-node-title">
+                {step.num}. {step.title}
+              </div>
+              <div className="workflow-node-desc">{step.desc}</div>
+              {step.meta && (
+                <div className="workflow-node-meta">
+                  <Clock3 size={11} />
+                  <span>{step.meta}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FileDetailsModal({
   fileData,
   loading,
@@ -1123,6 +1858,22 @@ function FileDetailsModal({
       onChanged();
     },
     onError: (error) => toast.error(error.message),
+  });
+
+  const confirmAndForwardMutation = trpc.files.directorConfirmAndForward.useMutation({
+    onSuccess: () => {
+      toast.success("تم اعتماد التوجيه والتوقيع الإلكتروني وإحالة المعاملة للموظف (المرحلة الثانية: PENDING_EMPLOYEE)");
+      onChanged();
+    },
+    onError: (error) => toast.error(error.message || "تعذر اعتماد التوجيه"),
+  });
+
+  const employeeFinalDispatchMutation = trpc.files.employeeFinalDispatch.useMutation({
+    onSuccess: () => {
+      toast.success("تم تفريغ التوجيه وترحيل المعاملة بشكل نهائي إلى قاعدة البيانات (COMPLETED)");
+      onChanged();
+    },
+    onError: (error) => toast.error(error.message || "تعذر ترحيل المعاملة"),
   });
 
   const adminUpdateMutation = trpc.files.adminUpdate.useMutation({
@@ -1326,6 +2077,19 @@ function FileDetailsModal({
                       <Field label="موضوع الوارد" required wide>
                         <input value={editForm.subject} onChange={(e) => setEditForm({ ...editForm, subject: e.target.value })} />
                       </Field>
+                      <AutoClassificationBanner
+                        subject={editForm.subject}
+                        currentFileType={editForm.fileType}
+                        currentImportance={editForm.importance}
+                        onApply={(suggestedType, suggestedImportance) => {
+                          setEditForm((prev: any) => ({
+                            ...prev,
+                            fileType: suggestedType,
+                            ...(suggestedImportance ? { importance: suggestedImportance } : {}),
+                          }));
+                          toast.success(`تم تحديث التصنيف إلى: ${suggestedType}`);
+                        }}
+                      />
                       <Field label="توجيه رئيس النيابة" wide>
                         <textarea rows={2} value={editForm.directorInstruction} onChange={(e) => setEditForm({ ...editForm, directorInstruction: e.target.value })} />
                       </Field>
@@ -1333,6 +2097,21 @@ function FileDetailsModal({
                         <textarea rows={2} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
                       </Field>
                     </div>
+
+                    <PreSaveClassificationReview
+                      subject={editForm.subject}
+                      selectedFileType={editForm.fileType}
+                      selectedImportance={editForm.importance}
+                      onApplySuggested={(suggestedType, suggestedImportance) => {
+                        setEditForm((prev: any) => ({
+                          ...prev,
+                          fileType: suggestedType,
+                          ...(suggestedImportance ? { importance: suggestedImportance } : {}),
+                        }));
+                        toast.success(`تم اعتماد التصنيف المقترح: ${suggestedType}`);
+                      }}
+                    />
+
                     <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "12px" }}>
                       <button type="submit" className="primary-button" disabled={adminUpdateMutation.isPending}>
                         {adminUpdateMutation.isPending ? "جاري حفظ التعديل..." : "حفظ التعديلات في النظام"}
@@ -1381,6 +2160,9 @@ function FileDetailsModal({
                 )}
               </div>
             )}
+
+            {/* مسار سير عمل المعاملة كـ Timeline مرئي يوضح الحالات الأربعة */}
+            <TransactionWorkflowTimeline file={file} />
 
             <div className="detail-meta-grid">
               <Meta label="جهة الورود" value={file.sourceEntity} />
@@ -1449,6 +2231,180 @@ function FileDetailsModal({
               <div className="notes-box">
                 <strong>ملاحظات</strong>
                 <p>{file.notes}</p>
+              </div>
+            )}
+
+            {/* Director Confirmation & Signing Card (Stage 1 -> Stage 2) */}
+            {canDirect && (file.status === "PENDING_AG" || file.status === "awaiting_direction") && (
+              <div style={{ background: "#f0f7f5", border: "2px solid #236959", borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "36px", height: "36px", borderRadius: "8px", background: "#1c5563", color: "#fff", display: "grid", placeItems: "center" }}>
+                      <Signature size={20} />
+                    </div>
+                    <div>
+                      <strong style={{ fontSize: "14px", color: "#143f4a", display: "block" }}>
+                        مرحلة النائب العام: اعتماد التوجيه والتوقيع الإلكتروني
+                      </strong>
+                      <span style={{ fontSize: "12px", color: "#4f726a" }}>
+                        التوقيع والاعتماد يختم المستند رسمياً ويحيل المعاملة فوراً للموظف في المرحلة الثانية بحالة (PENDING_EMPLOYEE)
+                      </span>
+                    </div>
+                  </div>
+                  <span className="status-badge status-amber">بانتظار توجيهكم واعتمادكم</span>
+                </div>
+
+                <div className="form-grid">
+                  <Field label="نص توجيه وقرار النائب العام" required wide>
+                    <textarea
+                      rows={3}
+                      value={instruction}
+                      onChange={(e) => setInstruction(e.target.value)}
+                      placeholder="اكتب التوجيه القضائي والقرار الصادر بشأن هذا الوارد بوضوح..."
+                    />
+                  </Field>
+                  <Field label="القسم أو الجهة المحال إليها">
+                    <input
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder="مثال: إدارة التفتيش القضائي، المكتب الفني، النيابة الكلية..."
+                    />
+                  </Field>
+                  <Field label="الموظف أو العضو المسؤول">
+                    <input
+                      value={employee}
+                      onChange={(e) => setEmployee(e.target.value)}
+                      placeholder="اسم الموظف أو عضو النيابة المكلف"
+                    />
+                  </Field>
+                  <Field label="الموعد النهائي للإنجاز">
+                    <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                  </Field>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px" }}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ background: "#185848", gap: "8px" }}
+                    disabled={confirmAndForwardMutation.isPending}
+                    onClick={() => {
+                      if (!instruction.trim()) {
+                        toast.error("يرجى كتابة نص التوجيه القضائي أولاً");
+                        return;
+                      }
+                      confirmAndForwardMutation.mutate({
+                        fileId: file.id,
+                        directorInstruction: instruction,
+                        assignedDepartment: department || undefined,
+                        assignedEmployee: employee || undefined,
+                        dueDate: dueDate || undefined,
+                      });
+                    }}
+                  >
+                    {confirmAndForwardMutation.isPending ? (
+                      <><RefreshCw size={16} className="spin" /> جاري التوقيع والترحيل للموظف...</>
+                    ) : (
+                      <><Signature size={16} /> توقيع واعتماد وإحالة للموظف (PENDING_EMPLOYEE)</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reception / Employee Final Dispatch Card (Stage 2 -> Completed) */}
+            {(isReception || isAdmin) && file.status === "PENDING_EMPLOYEE" && (
+              <div style={{ background: "#fbf6e8", border: "2px solid #b78a22", borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "36px", height: "36px", borderRadius: "8px", background: "#b78a22", color: "#fff", display: "grid", placeItems: "center" }}>
+                      <CheckCircle2 size={20} />
+                    </div>
+                    <div>
+                      <strong style={{ fontSize: "14px", color: "#684f15", display: "block" }}>
+                        المرحلة الثانية: تفريغ توجيه النائب العام والترحيل النهائي
+                      </strong>
+                      <span style={{ fontSize: "12px", color: "#7a673c" }}>
+                        قام فضيلة النائب العام بالتوجيه والتوقيع الإلكتروني. يرجى تفريغ وتأكيد التوجيه ثم الضغط على "ترحيل نهائي"
+                      </span>
+                    </div>
+                  </div>
+                  <span className="status-badge status-purple">بانتظار تفريغ التوجيه</span>
+                </div>
+
+                <div className="instruction-quote-card" style={{ margin: "10px 0 16px" }}>
+                  <div className="instruction-quote-header">
+                    <strong><Signature size={15} /> توجيه النائب العام المعتمد</strong>
+                    {file.signedAt && <span>بتاريخ: {formatDateTime(file.signedAt)}</span>}
+                  </div>
+                  <div className="instruction-quote-text">
+                    {file.signedInstruction || file.directorInstruction || "لا يوجد نص توجيه مدون"}
+                  </div>
+                  <div className="instruction-quote-signer">
+                    الموقع: {file.signatureName || "فضيلة النائب العام"} ({file.signatureTitle || "النائب العام للجمهورية"})
+                  </div>
+                </div>
+
+                <div className="form-grid">
+                  <Field label="تفريغ نص توجيه النائب العام (للتثبيت الدائم)" required wide>
+                    <textarea
+                      rows={3}
+                      value={instruction || file.directorInstruction || file.signedInstruction || ""}
+                      onChange={(e) => setInstruction(e.target.value)}
+                      placeholder="أدخل نص التوجيه المفرّغ للتثبيت في قاعدة البيانات..."
+                    />
+                  </Field>
+                  <Field label="القسم / الإدارة المحال إليها">
+                    <input
+                      value={department || file.assignedDepartment || ""}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder="القسم أو الإدارة"
+                    />
+                  </Field>
+                  <Field label="الموظف المكلف">
+                    <input
+                      value={employee || file.assignedEmployee || ""}
+                      onChange={(e) => setEmployee(e.target.value)}
+                      placeholder="اسم الموظف"
+                    />
+                  </Field>
+                  <Field label="ملاحظات ختامية للترحيل" wide>
+                    <textarea
+                      rows={2}
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="ملاحظات الحفظ والأرشفة النهائية..."
+                    />
+                  </Field>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px" }}>
+                  <button
+                    type="button"
+                    className="final-dispatch-btn"
+                    disabled={employeeFinalDispatchMutation.isPending}
+                    onClick={() => {
+                      const finalInst = instruction || file.directorInstruction || file.signedInstruction || "";
+                      if (!finalInst.trim()) {
+                        toast.error("يرجى تفريغ نص توجيه النائب العام قبل الترحيل النهائي");
+                        return;
+                      }
+                      employeeFinalDispatchMutation.mutate({
+                        fileId: file.id,
+                        finalInstruction: finalInst,
+                        assignedDepartment: department || file.assignedDepartment || undefined,
+                        assignedEmployee: employee || file.assignedEmployee || undefined,
+                        notes: notes || undefined,
+                      });
+                    }}
+                  >
+                    {employeeFinalDispatchMutation.isPending ? (
+                      <><RefreshCw size={16} className="spin" /> جاري الترحيل النهائي...</>
+                    ) : (
+                      <><CheckCircle2 size={16} /> ترحيل نهائي إلى قاعدة البيانات (COMPLETED)</>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
 
