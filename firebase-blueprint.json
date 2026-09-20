@@ -1,0 +1,22 @@
+{
+  "entities": {
+    "SystemHealth": {
+      "title": "SystemHealth",
+      "description": "System health ping record for connectivity validation",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Health status string"
+        }
+      },
+      "required": ["status"]
+    }
+  },
+  "firestore": {
+    "/_system_health/{id}": {
+      "schema": "SystemHealth",
+      "description": "System health status probe collection"
+    }
+  }
+}

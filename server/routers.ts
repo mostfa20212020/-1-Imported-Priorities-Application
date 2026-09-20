@@ -16,6 +16,7 @@ import { generateProsecutionPdf } from "./pdfService";
 import {
   addFileHistory,
   createIncomingFile,
+  getNextIncomingFileNumber,
   createNotification,
   getFileHistory,
   getFileStats,
@@ -30,6 +31,15 @@ import {
   listUsers,
   createLocalUser,
   updateLocalUser,
+  deleteLocalUser,
+  getJobTitlesList,
+  addJobTitle,
+  updateJobTitle,
+  deleteJobTitle,
+  getRoleDefinitions,
+  updateRoleDefinition,
+  resetRoleDefinitions,
+  RoleKey,
 } from "./db";
 
 const statusValues = ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived", "PENDING_AG", "PENDING_EMPLOYEE", "COMPLETED"] as const;
@@ -191,6 +201,7 @@ export const appRouter = router({
   files: router({
     list: protectedProcedure.input(z.object({ search: z.string().optional(), status: z.string().optional(), importance: z.string().optional(), fileType: z.string().optional(), sourceEntity: z.string().optional() }).default({})).query(({ input }) => listIncomingFiles(input)),
     stats: protectedProcedure.query(() => getFileStats()),
+    nextNumber: protectedProcedure.query(() => getNextIncomingFileNumber()),
     get: protectedProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => {
       const file = await getIncomingFile(input.id);
       if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
@@ -599,19 +610,81 @@ export const appRouter = router({
   }),
   users: router({
     list: adminProcedure.query(() => listUsers()),
-    create: adminProcedure.input(z.object({ username: z.string().min(2).max(64), password: z.string().min(8).max(128), name: z.string().min(2).max(255), role: z.enum(["input", "director", "admin"]), email: z.string().email().optional() })).mutation(async ({ input }) => {
+    jobTitles: adminProcedure.query(() => getJobTitlesList()),
+    roleDefinitions: publicProcedure.query(() => getRoleDefinitions()),
+    updateRoleDefinition: adminProcedure.input(z.object({
+      key: z.enum(["input", "director", "admin"]),
+      title: z.string().min(2, "مسمى الصلاحية يجب أن يكون حرفين على الأقل").max(100),
+      description: z.string().max(255).optional(),
+    })).mutation(async ({ input }) => {
+      return await updateRoleDefinition(input.key, input.title, input.description);
+    }),
+    resetRoleDefinitions: adminProcedure.mutation(async () => {
+      return await resetRoleDefinitions();
+    }),
+    addJobTitle: adminProcedure.input(z.object({
+      title: z.string().min(2, "المسمى الوظيفي يجب أن يكون حرفين على الأقل").max(255),
+    })).mutation(async ({ input }) => {
+      return await addJobTitle(input.title);
+    }),
+    updateJobTitle: adminProcedure.input(z.object({
+      oldTitle: z.string().min(1),
+      newTitle: z.string().min(2, "المسمى الوظيفي الجديد يجب أن يكون حرفين على الأقل").max(255),
+    })).mutation(async ({ input }) => {
+      return await updateJobTitle(input.oldTitle, input.newTitle);
+    }),
+    deleteJobTitle: adminProcedure.input(z.object({
+      title: z.string().min(1),
+    })).mutation(async ({ input }) => {
+      return await deleteJobTitle(input.title);
+    }),
+    create: adminProcedure.input(z.object({
+      username: z.string().min(2).max(64),
+      password: z.string().min(6, "كلمة المرور يجب أن لا تقل عن 6 أحرف").max(128),
+      name: z.string().min(2, "اسم الموظف مطلوب").max(255),
+      jobTitle: z.string().max(255).optional(),
+      role: z.enum(["input", "director", "admin"]),
+      email: z.string().email().optional().or(z.literal("")),
+    })).mutation(async ({ input }) => {
       const username = input.username.trim().toLowerCase();
       if (await getUserByUsername(username)) throw new TRPCError({ code: "CONFLICT", message: "اسم المستخدم مستخدم مسبقًا" });
-      const user = await createLocalUser({ openId: `local-${username}-${Date.now()}`, username, passwordHash: hashPassword(input.password), name: input.name, email: input.email, loginMethod: "local", role: input.role });
+      const user = await createLocalUser({
+        openId: `local-${username}-${Date.now()}`,
+        username,
+        passwordHash: hashPassword(input.password),
+        name: input.name,
+        jobTitle: input.jobTitle || undefined,
+        email: input.email || undefined,
+        loginMethod: "local",
+        role: input.role,
+      });
       return user ? publicUser(user) : null;
     }),
-    update: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(255).optional(), role: z.enum(["input", "director", "admin"]).optional(), password: z.string().min(8).max(128).optional() })).mutation(async ({ input }) => {
+    update: adminProcedure.input(z.object({
+      id: z.number().int().positive(),
+      name: z.string().min(2).max(255).optional(),
+      jobTitle: z.string().max(255).optional().nullable(),
+      role: z.enum(["input", "director", "admin"]).optional(),
+      email: z.string().email().optional().or(z.literal("")).nullable(),
+      password: z.string().min(6, "كلمة المرور يجب أن لا تقل عن 6 أحرف").max(128).optional(),
+    })).mutation(async ({ input }) => {
       const values: any = {};
       if (input.name !== undefined) values.name = input.name;
+      if (input.jobTitle !== undefined) values.jobTitle = input.jobTitle;
       if (input.role !== undefined) values.role = input.role;
+      if (input.email !== undefined) values.email = input.email;
       if (input.password) values.passwordHash = hashPassword(input.password);
       const user = await updateLocalUser(input.id, values);
       return user ? publicUser(user) : null;
+    }),
+    delete: adminProcedure.input(z.object({
+      id: z.number().int().positive(),
+    })).mutation(async ({ input }) => {
+      const success = await deleteLocalUser(input.id);
+      if (!success) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "المستخدم غير موجود أو تم حذفه مسبقاً" });
+      }
+      return { success: true };
     }),
   }),
 });

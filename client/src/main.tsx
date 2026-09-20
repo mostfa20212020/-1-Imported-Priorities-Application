@@ -53,7 +53,12 @@ queryClient.getQueryCache().subscribe(event => {
     const error = event.query.state.error;
     redirectToLoginIfUnauthorized(error);
     const msg = (error as any)?.message || "";
-    if (msg === "Failed to fetch" || msg.includes("aborted") || msg.includes("NetworkError")) {
+    if (
+      msg === "Failed to fetch" ||
+      msg.includes("aborted") ||
+      msg.includes("NetworkError") ||
+      msg.includes("تعذر الاتصال بالخادم")
+    ) {
       console.warn("[API Query Network Notice]", msg);
     } else {
       console.error("[API Query Error]", error);

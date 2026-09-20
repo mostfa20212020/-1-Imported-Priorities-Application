@@ -86,6 +86,7 @@ const inMemoryUsers: User[] = [
     username: "director",
     passwordHash: defaultPasswordHash,
     name: "فضيلة القاضي / رئيس النيابة العامة",
+    jobTitle: "رئيس النيابة العامة",
     email: "director@prosecution.gov.ye",
     loginMethod: "local",
     role: "director",
@@ -99,6 +100,7 @@ const inMemoryUsers: User[] = [
     username: "reception",
     passwordHash: defaultPasswordHash,
     name: "موظف الاستقبال والتسجيل",
+    jobTitle: "موظف الاستقبال والتسجيل",
     email: "reception@prosecution.gov.ye",
     loginMethod: "local",
     role: "input",
@@ -112,6 +114,7 @@ const inMemoryUsers: User[] = [
     username: "admin",
     passwordHash: defaultPasswordHash,
     name: "مدير النظام العام",
+    jobTitle: "مدير النظام العام",
     email: "admin@prosecution.gov.ye",
     loginMethod: "local",
     role: "admin",
@@ -392,6 +395,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       username: user.username ?? `user_${Date.now()}`,
       passwordHash: user.passwordHash ?? null,
       name: user.name ?? null,
+      jobTitle: user.jobTitle ?? null,
       email: user.email ?? null,
       loginMethod: user.loginMethod ?? "local",
       role: user.role ?? (user.openId === ENV.ownerOpenId ? "admin" : "user"),
@@ -439,6 +443,7 @@ export async function listUsers() {
           openId: users.openId,
           username: users.username,
           name: users.name,
+          jobTitle: users.jobTitle,
           email: users.email,
           loginMethod: users.loginMethod,
           role: users.role,
@@ -453,11 +458,12 @@ export async function listUsers() {
   }
   return [...inMemoryUsers]
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(({ id, openId, username, name, email, loginMethod, role, createdAt, lastSignedIn }) => ({
+    .map(({ id, openId, username, name, jobTitle, email, loginMethod, role, createdAt, lastSignedIn }) => ({
       id,
       openId,
       username,
       name,
+      jobTitle: jobTitle ?? null,
       email,
       loginMethod,
       role,
@@ -482,6 +488,7 @@ export async function createLocalUser(values: InsertUser) {
     username: values.username || null,
     passwordHash: values.passwordHash || null,
     name: values.name || null,
+    jobTitle: values.jobTitle || null,
     email: values.email || null,
     loginMethod: values.loginMethod || "local",
     role: values.role || "user",
@@ -508,11 +515,161 @@ export async function updateLocalUser(id: number, values: Partial<InsertUser>) {
   if (!target) return undefined;
   if (values.name !== undefined) target.name = values.name;
   if (values.username !== undefined) target.username = values.username;
+  if (values.jobTitle !== undefined) target.jobTitle = values.jobTitle;
+  if (values.email !== undefined) target.email = values.email;
   if (values.role !== undefined) target.role = values.role;
   if (values.passwordHash !== undefined) target.passwordHash = values.passwordHash;
   target.updatedAt = new Date();
   return target;
 }
+
+export async function deleteLocalUser(id: number): Promise<boolean> {
+  try {
+    const db = await getDb();
+    if (db) {
+      await db.delete(users).where(eq(users.id, id));
+      return true;
+    }
+  } catch (err) {
+    console.warn("[Database] deleteLocalUser fallback to memory:", err);
+  }
+  const idx = inMemoryUsers.findIndex((u) => u.id === id);
+  if (idx !== -1) {
+    inMemoryUsers.splice(idx, 1);
+    return true;
+  }
+  return false;
+}
+
+let inMemoryJobTitles: string[] = [
+  "رئيس النيابة العامة",
+  "النائب العام للجمهورية",
+  "المحامي العام الأول",
+  "رئيس نيابة الاستئناف",
+  "وكيل نيابة أول",
+  "وكيل نيابة",
+  "عضو نيابة عامة",
+  "مدير المكتب الفني",
+  "مدير إدارة الشؤون القضائية",
+  "رئيس قلم التحقيق",
+  "أمين السر",
+  "موظف الاستقبال والتسجيل",
+  "مدير النظام العام",
+];
+
+export async function getJobTitlesList(): Promise<string[]> {
+  return inMemoryJobTitles;
+}
+
+export async function addJobTitle(title: string): Promise<string[]> {
+  const trimmed = title.trim();
+  if (trimmed && !inMemoryJobTitles.includes(trimmed)) {
+    inMemoryJobTitles.push(trimmed);
+  }
+  return inMemoryJobTitles;
+}
+
+export async function updateJobTitle(oldTitle: string, newTitle: string): Promise<string[]> {
+  const oTrimmed = oldTitle.trim();
+  const nTrimmed = newTitle.trim();
+  if (!nTrimmed) return inMemoryJobTitles;
+  
+  const idx = inMemoryJobTitles.indexOf(oTrimmed);
+  if (idx !== -1) {
+    inMemoryJobTitles[idx] = nTrimmed;
+  } else if (!inMemoryJobTitles.includes(nTrimmed)) {
+    inMemoryJobTitles.push(nTrimmed);
+  }
+
+  // Also update users who have oldTitle to the new title
+  try {
+    const db = await getDb();
+    if (db) {
+      await db.update(users).set({ jobTitle: nTrimmed, updatedAt: new Date() }).where(eq(users.jobTitle, oTrimmed));
+    }
+  } catch (err) {
+    console.warn("[Database] updateJobTitle users fallback to memory:", err);
+  }
+
+  for (const user of inMemoryUsers) {
+    if (user.jobTitle === oTrimmed) {
+      user.jobTitle = nTrimmed;
+      user.updatedAt = new Date();
+    }
+  }
+
+  return inMemoryJobTitles;
+}
+
+export async function deleteJobTitle(title: string): Promise<string[]> {
+  const trimmed = title.trim();
+  inMemoryJobTitles = inMemoryJobTitles.filter((t) => t !== trimmed);
+  return inMemoryJobTitles;
+}
+
+export type RoleKey = "input" | "director" | "admin";
+
+export interface RoleDefinition {
+  key: RoleKey;
+  title: string;
+  description: string;
+  badgeClass: string;
+}
+
+const defaultRoleDefinitions: Record<RoleKey, { title: string; description: string; badgeClass: string }> = {
+  input: {
+    title: "موظف الإدخال والاستقبال",
+    description: "تسجيل، فحص، وتوجيه وارد، ومتابعة القيد وحالات المعاملات",
+    badgeClass: "badge-role-input",
+  },
+  director: {
+    title: "رئيس النيابة العامة",
+    description: "إشراف، إصدار توجيهات وقرارات قضائية، واعتماد التوقيع الرقمي",
+    badgeClass: "badge-role-director",
+  },
+  admin: {
+    title: "مدير النظام العام",
+    description: "كامل الصلاحيات والإعدادات وإدارة المستخدمين والمسميات",
+    badgeClass: "badge-role-admin",
+  },
+};
+
+let inMemoryRoleDefinitions: Record<RoleKey, { title: string; description: string; badgeClass: string }> = {
+  input: { ...defaultRoleDefinitions.input },
+  director: { ...defaultRoleDefinitions.director },
+  admin: { ...defaultRoleDefinitions.admin },
+};
+
+export async function getRoleDefinitions(): Promise<Record<RoleKey, { title: string; description: string; badgeClass: string }>> {
+  return inMemoryRoleDefinitions;
+}
+
+export async function updateRoleDefinition(
+  key: RoleKey,
+  title: string,
+  description?: string
+): Promise<Record<RoleKey, { title: string; description: string; badgeClass: string }>> {
+  if (inMemoryRoleDefinitions[key]) {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle) {
+      inMemoryRoleDefinitions[key].title = trimmedTitle;
+    }
+    if (description !== undefined) {
+      inMemoryRoleDefinitions[key].description = description.trim();
+    }
+  }
+  return inMemoryRoleDefinitions;
+}
+
+export async function resetRoleDefinitions(): Promise<Record<RoleKey, { title: string; description: string; badgeClass: string }>> {
+  inMemoryRoleDefinitions = {
+    input: { ...defaultRoleDefinitions.input },
+    director: { ...defaultRoleDefinitions.director },
+    admin: { ...defaultRoleDefinitions.admin },
+  };
+  return inMemoryRoleDefinitions;
+}
+
 
 export async function listIncomingFiles(filters: {
   search?: string;
@@ -664,6 +821,40 @@ export async function getFileStats() {
     stats.byType[f.fileType] = (stats.byType[f.fileType] || 0) + 1;
   }
   return stats;
+}
+
+export async function getNextIncomingFileNumber(): Promise<{ nextNumber: number; formatted: string }> {
+  try {
+    const db = await getDb();
+    if (db) {
+      const rows = await db.select({ fileNumber: incomingFiles.fileNumber }).from(incomingFiles);
+      let maxNum = 0;
+      for (const row of rows) {
+        if (!row.fileNumber) continue;
+        const pure = row.fileNumber.trim();
+        const num = parseInt(pure, 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+      const nextNumber = maxNum > 0 ? maxNum + 1 : 1;
+      return { nextNumber, formatted: String(nextNumber) };
+    }
+  } catch (err) {
+    console.warn("[Database] getNextIncomingFileNumber fallback to memory:", err);
+  }
+
+  let maxNum = 0;
+  for (const f of inMemoryFiles) {
+    if (!f.fileNumber) continue;
+    const pure = f.fileNumber.trim();
+    const num = parseInt(pure, 10);
+    if (!isNaN(num) && num > maxNum) {
+      maxNum = num;
+    }
+  }
+  const nextNumber = maxNum > 0 ? maxNum + 1 : 1;
+  return { nextNumber, formatted: String(nextNumber) };
 }
 
 export async function createIncomingFile(values: InsertIncomingFile) {

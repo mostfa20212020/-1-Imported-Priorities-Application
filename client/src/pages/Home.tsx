@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   BarChart3,
   Bell,
+  Briefcase,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -114,6 +115,25 @@ function getRoleHint(role?: string) {
 
 export default function Home() {
   const { user, loading, logout } = useAuth();
+  const roleDefsQuery = trpc.users.roleDefinitions.useQuery();
+  const roleDefs = roleDefsQuery.data;
+
+  const currentRoleLabel = (role?: string) => {
+    if (!role) return "—";
+    if (roleDefs && (roleDefs as any)[role]?.title) {
+      return (roleDefs as any)[role].title;
+    }
+    return getRoleLabel(role);
+  };
+
+  const currentRoleHint = (role?: string) => {
+    if (!role) return "";
+    if (roleDefs && (roleDefs as any)[role]?.description) {
+      return (roleDefs as any)[role].description;
+    }
+    return getRoleHint(role);
+  };
+
   const userRole = (user?.role || "input") as "admin" | "director" | "input";
   const isAdmin = userRole === "admin";
   const isDirector = userRole === "director";
@@ -297,8 +317,8 @@ export default function Home() {
             <div className="avatar avatar-small">{getInitials(displayName)}</div>
             <div className="profile-copy">
               <strong>{displayName}</strong>
-              <span className={`role-badge-pill badge-role-${userRole}`}>{getRoleLabel(user.role)}</span>
-              <span className="role-hint-pill">{getRoleHint(user.role)}</span>
+              <span className={`role-badge-pill badge-role-${userRole}`}>{(user as any)?.jobTitle || currentRoleLabel(user.role)}</span>
+              <span className="role-hint-pill">{currentRoleHint(user.role)}</span>
             </div>
             <button className="icon-button subtle" onClick={() => {
               try {
@@ -343,7 +363,7 @@ export default function Home() {
               <div className="avatar">{getInitials(displayName)}</div>
               <div className="top-profile-copy">
                 <strong>{displayName}</strong>
-                <span className={`role-badge-pill badge-role-${userRole}`}>{getRoleLabel(user.role)}</span>
+                <span className={`role-badge-pill badge-role-${userRole}`}>{(user as any)?.jobTitle || currentRoleLabel(user.role)}</span>
               </div>
             </div>
           </div>
@@ -1226,6 +1246,10 @@ function RegisterModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 }
 
 function RegisterForm({ onSaved }: { onSaved: () => void }) {
+  const nextNumberQuery = trpc.files.nextNumber.useQuery(undefined, {
+    refetchOnWindowFocus: true,
+  });
+
   const [form, setForm] = useState({
     fileNumber: "",
     year: "2026",
@@ -1236,11 +1260,23 @@ function RegisterForm({ onSaved }: { onSaved: () => void }) {
     importance: "normal",
     notes: "",
   });
+
+  // مزامنة الترقيم التلقائي عند جلبه من الخادم
+  useEffect(() => {
+    if (nextNumberQuery.data?.formatted) {
+      setForm((prev) => ({
+        ...prev,
+        fileNumber: nextNumberQuery.data.formatted,
+      }));
+    }
+  }, [nextNumberQuery.data]);
+
   const [pdf, setPdf] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const createMutation = trpc.files.create.useMutation({
     onSuccess: () => {
       toast.success("تم تسجيل الوارد وترحيله بنجاح إلى النائب العام للتوجيه والتوقيع (PENDING_AG)");
+      nextNumberQuery.refetch();
       setForm({
         fileNumber: "",
         year: "2026",
@@ -1304,14 +1340,76 @@ function RegisterForm({ onSaved }: { onSaved: () => void }) {
         </div>
       </div>
       <div className="form-grid">
-        <Field label="رقم الوارد" required>
-          <input value={form.fileNumber} onChange={(e) => setField("fileNumber", e.target.value)} placeholder="مثال: ١٢٣ / ٢٠٢٦" />
+        <Field label={<>رقم الوارد <small style={{ color: "#2563eb", fontWeight: 700, fontSize: "10px", marginRight: "4px" }}>(ترقيم آلي غير قابل للتعديل)</small></>} required>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <input
+              id="auto-file-number-input"
+              value={form.fileNumber || (nextNumberQuery.isLoading ? "جاري التوليد..." : "1")}
+              readOnly
+              className="readonly-auto-field"
+              placeholder="1"
+              title="رقم الوارد يُولّد تلقائيًا ويبدأ من 1 وغير قابل للتعديل"
+              style={{
+                background: "#f1f5f9",
+                color: "#1e293b",
+                fontWeight: 700,
+                cursor: "not-allowed",
+                borderColor: "#cbd5e1",
+                paddingLeft: "34px",
+              }}
+            />
+            <span
+              style={{
+                position: "absolute",
+                left: "10px",
+                fontSize: "11px",
+                color: "#64748b",
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+              }}
+              title="آلي"
+            >
+              🔒 آلي
+            </span>
+          </div>
         </Field>
         <Field label="السنة" required>
           <input type="number" value={form.year} onChange={(e) => setField("year", e.target.value)} />
         </Field>
-        <Field label="تاريخ الوصول" required>
-          <input type="date" value={form.arrivalDate} onChange={(e) => setField("arrivalDate", e.target.value)} />
+        <Field label={<>تاريخ الوصول <small style={{ color: "#059669", fontWeight: 700, fontSize: "10px", marginRight: "4px" }}>(تلقائي غير قابل للتعديل)</small></>} required>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <input
+              id="auto-arrival-date-input"
+              type="date"
+              value={form.arrivalDate}
+              readOnly
+              className="readonly-auto-field"
+              title="تاريخ الوصول يُحدد تلقائياً بتاريخ اليوم وغير قابل للتعديل"
+              style={{
+                background: "#f1f5f9",
+                color: "#1e293b",
+                fontWeight: 600,
+                cursor: "not-allowed",
+                borderColor: "#cbd5e1",
+                paddingLeft: "34px",
+              }}
+            />
+            <span
+              style={{
+                position: "absolute",
+                left: "10px",
+                fontSize: "11px",
+                color: "#059669",
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+              }}
+              title="تلقائي"
+            >
+              🔒 اليوم
+            </span>
+          </div>
         </Field>
         <Field label="جهة الورود" required>
           <input value={form.sourceEntity} onChange={(e) => setField("sourceEntity", e.target.value)} placeholder="اسم الجهة أو المؤسسة" />
@@ -1433,7 +1531,7 @@ function RegisterForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function Field({ label, required, wide, children }: { label: string; required?: boolean; wide?: boolean; children: React.ReactNode }) { return <label className={`field ${wide ? "wide" : ""}`}><span>{label}{required && <b>*</b>}</span>{children}</label>; }
+function Field({ label, required, wide, children }: { label: React.ReactNode; required?: boolean; wide?: boolean; children: React.ReactNode }) { return <label className={`field ${wide ? "wide" : ""}`}><span>{label}{required && <b>*</b>}</span>{children}</label>; }
 
 function FileInboxView({
   files,
@@ -2723,133 +2821,1248 @@ function readFileAsBase64(file: File) {
 
 function UsersView() {
   const usersQuery = trpc.users.list.useQuery();
+  const jobTitlesQuery = trpc.users.jobTitles.useQuery();
+  const roleDefsQuery = trpc.users.roleDefinitions.useQuery();
+  const roleDefs = roleDefsQuery.data;
   const utils = trpc.useUtils();
-  const [form, setForm] = useState({ username: "", password: "", name: "", role: "input" as "input" | "director" | "admin", email: "" });
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [newPassword, setNewPassword] = useState("");
+
+  const [activeTab, setActiveTab] = useState<"users" | "titles" | "roles">("users");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("all");
+
+  // Create user form state
+  const [form, setForm] = useState({
+    username: "",
+    password: "",
+    name: "",
+    jobTitle: "",
+    role: "input" as "input" | "director" | "admin",
+    email: "",
+  });
+
+  // Edit user modal state
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    jobTitle: "",
+    role: "input" as "input" | "director" | "admin",
+    email: "",
+    newPassword: "",
+  });
+
+  // Delete user modal state
+  const [userToDelete, setUserToDelete] = useState<any | null>(null);
+
+  // Job titles management state
+  const [newJobTitleInput, setNewJobTitleInput] = useState("");
+  const [editingJobTitle, setEditingJobTitle] = useState<{ oldTitle: string; newTitle: string } | null>(null);
+  const [jobTitleToDelete, setJobTitleToDelete] = useState<string | null>(null);
+
+  // Role definitions management state
+  const [editingRoleDef, setEditingRoleDef] = useState<{
+    key: "input" | "director" | "admin";
+    title: string;
+    description: string;
+  } | null>(null);
+
   const createMutation = trpc.users.create.useMutation({
     onSuccess: () => {
       toast.success("تمت إضافة المستخدم بنجاح");
-      setForm({ username: "", password: "", name: "", role: "input", email: "" });
+      setForm({ username: "", password: "", name: "", jobTitle: "", role: "input", email: "" });
       utils.users.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
+
   const updateMutation = trpc.users.update.useMutation({
     onSuccess: () => {
-      toast.success("تم تحديث بيانات المستخدم");
-      setEditingId(null);
-      setNewPassword("");
+      toast.success("تم تحديث بيانات المستخدم بنجاح");
+      setEditingUser(null);
       utils.users.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
-  const submit = (event: React.FormEvent) => {
+
+  const deleteMutation = trpc.users.delete.useMutation({
+    onSuccess: () => {
+      toast.success("تم حذف المستخدم بنجاح");
+      setUserToDelete(null);
+      utils.users.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const addJobTitleMutation = trpc.users.addJobTitle.useMutation({
+    onSuccess: () => {
+      toast.success("تمت إضافة المسمى الوظيفي بنجاح");
+      setNewJobTitleInput("");
+      utils.users.jobTitles.invalidate();
+      utils.users.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateJobTitleMutation = trpc.users.updateJobTitle.useMutation({
+    onSuccess: () => {
+      toast.success("تم تعديل المسمى الوظيفي وتحديث الموظفين المرتبطين به بنجاح");
+      setEditingJobTitle(null);
+      utils.users.jobTitles.invalidate();
+      utils.users.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteJobTitleMutation = trpc.users.deleteJobTitle.useMutation({
+    onSuccess: () => {
+      toast.success("تم حذف المسمى الوظيفي");
+      setJobTitleToDelete(null);
+      utils.users.jobTitles.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateRoleDefMutation = trpc.users.updateRoleDefinition.useMutation({
+    onSuccess: () => {
+      toast.success("تم تحديث مسمى ووصف الصلاحية بنجاح");
+      setEditingRoleDef(null);
+      utils.users.roleDefinitions.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const resetRoleDefsMutation = trpc.users.resetRoleDefinitions.useMutation({
+    onSuccess: () => {
+      toast.success("تمت استعادة مسميات الصلاحيات الافتراضية بنجاح");
+      utils.users.roleDefinitions.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const getRoleTitle = (role?: string) => {
+    if (!role) return "—";
+    if (roleDefs && (roleDefs as any)[role]?.title) {
+      return (roleDefs as any)[role].title;
+    }
+    if (role === "admin") return "مدير النظام العام";
+    if (role === "director") return "رئيس النيابة العامة";
+    return "موظف الإدخال والاستقبال";
+  };
+
+  const getRoleDesc = (role?: string) => {
+    if (!role) return "";
+    if (roleDefs && (roleDefs as any)[role]?.description) {
+      return (roleDefs as any)[role].description;
+    }
+    if (role === "admin") return "كامل الصلاحيات والإعدادات وإدارة المستخدمين";
+    if (role === "director") return "إشراف، إصدار توجيهات وقرارات، وتوقيع رقمي";
+    return "تسجيل، فحص، وتوجيه وارد، ومتابعة المعاملات";
+  };
+
+  const submitCreateUser = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!form.username || !form.name || !form.password) {
-      toast.error("أكمل اسم المستخدم والاسم وكلمة المرور");
+    if (!form.username.trim() || !form.name.trim() || !form.password) {
+      toast.error("أكمل اسم المستخدم، اسم الموظف، وكلمة المرور");
       return;
     }
-    createMutation.mutate({ ...form, email: form.email || undefined });
+    createMutation.mutate({
+      username: form.username.trim(),
+      password: form.password,
+      name: form.name.trim(),
+      jobTitle: form.jobTitle.trim() || undefined,
+      role: form.role,
+      email: form.email.trim() || undefined,
+    });
   };
-  const roleLabel = (role: string) => (role === "admin" ? "مدير النظام" : role === "director" ? "رئيس النيابة" : "الإدخال والاستقبال");
+
+  const openEditModal = (account: any) => {
+    setEditingUser(account);
+    setEditForm({
+      name: account.name || "",
+      jobTitle: account.jobTitle || "",
+      role: account.role || "input",
+      email: account.email || "",
+      newPassword: "",
+    });
+  };
+
+  const submitEditUser = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingUser) return;
+    if (!editForm.name.trim()) {
+      toast.error("يرجى إدخال اسم الموظف");
+      return;
+    }
+    if (editForm.newPassword && editForm.newPassword.length < 6) {
+      toast.error("كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل");
+      return;
+    }
+
+    updateMutation.mutate({
+      id: editingUser.id,
+      name: editForm.name.trim(),
+      jobTitle: editForm.jobTitle.trim() || null,
+      role: editForm.role,
+      email: editForm.email.trim() || null,
+      password: editForm.newPassword.trim() ? editForm.newPassword : undefined,
+    });
+  };
+
+  const roleLabel = (role: string) => {
+    return getRoleTitle(role);
+  };
+
+  const usersList = usersQuery.data || [];
+  const jobTitlesList = jobTitlesQuery.data || [];
+
+  const filteredUsers = useMemo(() => {
+    return usersList.filter((account) => {
+      if (roleFilter !== "all" && account.role !== roleFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchName = (account.name || "").toLowerCase().includes(q);
+        const matchUsername = (account.username || "").toLowerCase().includes(q);
+        const matchJob = (account.jobTitle || "").toLowerCase().includes(q);
+        const matchEmail = (account.email || "").toLowerCase().includes(q);
+        if (!matchName && !matchUsername && !matchJob && !matchEmail) return false;
+      }
+      return true;
+    });
+  }, [usersList, roleFilter, searchQuery]);
+
+  const titleUsageCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of jobTitlesList) {
+      counts[t] = 0;
+    }
+    for (const u of usersList) {
+      if (u.jobTitle) {
+        counts[u.jobTitle] = (counts[u.jobTitle] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [jobTitlesList, usersList]);
+
   return (
     <div className="users-page">
       <div className="section-heading">
         <div>
           <div className="eyebrow">التحكم والصلاحيات</div>
-          <h1>المستخدمون والصلاحيات</h1>
-          <p>أضف المستخدمين، غيّر أدوارهم، وأعد ضبط كلمات المرور من مكان واحد.</p>
+          <h1>إدارة المستخدمين والمسميات الوظيفية</h1>
+          <p>إدارة شاملة لحسابات المستخدمين، حذف أي حساب، وتعديل المسميات الوظيفية والصلاحيات بكل مرونة.</p>
         </div>
-        <div className="users-count">
-          <UserCog size={18} />
-          <strong>{(usersQuery.data || []).length}</strong>
-          <span>مستخدمون</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <div className="users-count">
+            <UserCog size={18} />
+            <strong>{usersList.length}</strong>
+            <span>مستخدمون</span>
+          </div>
+          <div className="users-count" style={{ background: "#f0f5ff", color: "#1e40af" }}>
+            <Briefcase size={18} />
+            <strong>{jobTitlesList.length}</strong>
+            <span>مسميات وظيفية</span>
+          </div>
+          <div className="users-count" style={{ background: "#fdf4ff", color: "#86198f" }}>
+            <ShieldCheck size={18} />
+            <strong>3</strong>
+            <span>صلاحيات نظام</span>
+          </div>
         </div>
       </div>
-      <div className="users-grid">
-        <form className="form-card user-form-card" onSubmit={submit}>
-          <div className="form-section-title">
-            <span className="number-chip">١</span>
-            <div>
-              <h3>إضافة مستخدم جديد</h3>
-              <span>أنشئ حسابًا بصلاحية محددة</span>
+
+      {/* Tabs Navigation */}
+      <div className="users-tabs-nav">
+        <button
+          type="button"
+          className={`users-tab-btn ${activeTab === "users" ? "active" : ""}`}
+          onClick={() => setActiveTab("users")}
+        >
+          <UserRound size={16} />
+          <span>حسابات المستخدمين</span>
+          <span className="users-tab-count">{usersList.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`users-tab-btn ${activeTab === "titles" ? "active" : ""}`}
+          onClick={() => setActiveTab("titles")}
+        >
+          <Briefcase size={16} />
+          <span>المسميات الوظيفية المعتمدة</span>
+          <span className="users-tab-count">{jobTitlesList.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`users-tab-btn ${activeTab === "roles" ? "active" : ""}`}
+          onClick={() => setActiveTab("roles")}
+        >
+          <ShieldCheck size={16} />
+          <span>مسميات الصلاحيات والأدوار</span>
+          <span className="users-tab-count">3</span>
+        </button>
+      </div>
+
+      {activeTab === "users" ? (
+        <div className="users-grid">
+          {/* Add User Form */}
+          <form className="form-card user-form-card" onSubmit={submitCreateUser}>
+            <div className="form-section-title">
+              <span className="number-chip">١</span>
+              <div>
+                <h3>إضافة مستخدم جديد</h3>
+                <span>أنشئ حساباً بمسمى وظيفي وصلاحية محددة</span>
+              </div>
             </div>
-          </div>
-          <div className="form-grid">
-            <Field label="اسم المستخدم" required>
-              <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="مثال: reception" />
-            </Field>
-            <Field label="اسم الموظف" required>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="الاسم الكامل" />
-            </Field>
-            <Field label="كلمة المرور" required>
-              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="8 أحرف على الأقل" />
-            </Field>
-            <Field label="البريد الإلكتروني">
-              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="اختياري" />
-            </Field>
-            <Field label="الصلاحية" wide>
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as typeof form.role })}>
-                <option value="input">موظف الإدخال والاستقبال</option>
-                <option value="director">رئيس النيابة العامة</option>
-                <option value="admin">مدير النظام</option>
-              </select>
-            </Field>
-          </div>
-          <button type="submit" className="primary-button" disabled={createMutation.isPending}>
-            <Plus size={16} /> {createMutation.isPending ? "جارٍ الإضافة..." : "إضافة المستخدم"}
-          </button>
-        </form>
-        <div className="panel users-list-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>الحسابات الحالية</h2>
-              <span>لا تظهر كلمات المرور لأي مستخدم</span>
-            </div>
-            <ShieldCheck size={20} className="heading-icon" />
-          </div>
-          {usersQuery.isLoading ? (
-            <div className="loading-inline">
-              <RefreshCw className="spin" /> جاري تحميل المستخدمين...
-            </div>
-          ) : (
-            <div className="users-list">
-              {(usersQuery.data || []).map((account) => (
-                <div className="user-row" key={account.id}>
-                  <div className="avatar avatar-small">{getInitials(account.name)}</div>
-                  <div className="user-row-copy">
-                    <strong>{account.name || account.username}</strong>
-                    <span>
-                      @{account.username} · {roleLabel(account.role)}
-                    </span>
+
+            <div className="form-grid">
+              <Field label="اسم الموظف" required>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="مثال: فضيلة القاضي / أحمد علي"
+                />
+              </Field>
+
+              <Field label="اسم المستخدم" required>
+                <input
+                  value={form.username}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
+                  placeholder="مثال: a_ali"
+                />
+              </Field>
+
+              <Field label="المسمى الوظيفي">
+                <div style={{ position: "relative" }}>
+                  <input
+                    list="jobTitlesOptions"
+                    value={form.jobTitle}
+                    onChange={(e) => setForm({ ...form, jobTitle: e.target.value })}
+                    placeholder="اختر أو اكتب مسمى وظيفي..."
+                  />
+                  <datalist id="jobTitlesOptions">
+                    {jobTitlesList.map((title) => (
+                      <option key={title} value={title} />
+                    ))}
+                  </datalist>
+                </div>
+              </Field>
+
+              <Field
+                label={
+                  <div className="field-label-row">
+                    <span>الصلاحية في النظام</span>
+                    <button
+                      type="button"
+                      className="field-quick-btn"
+                      onClick={() => {
+                        setEditingRoleDef({
+                          key: form.role,
+                          title: getRoleTitle(form.role),
+                          description: getRoleDesc(form.role),
+                        });
+                      }}
+                      title="تعديل مسمى هذه الصلاحية في النظام"
+                    >
+                      <Pencil size={11} /> تعديل مسميات الصلاحيات
+                    </button>
                   </div>
-                  {editingId === account.id ? (
-                    <div className="user-edit">
-                      <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="كلمة مرور جديدة" />
-                      <select defaultValue={account.role} onChange={(e) => updateMutation.mutate({ id: account.id, role: e.target.value as "input" | "director" | "admin" })}>
-                        <option value="input">إدخال واستقبال</option>
-                        <option value="director">رئيس النيابة</option>
-                        <option value="admin">مدير النظام</option>
-                      </select>
-                      <button className="primary-button small" onClick={() => (newPassword.length >= 8 ? updateMutation.mutate({ id: account.id, password: newPassword }) : toast.error("كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل"))}>
-                        حفظ كلمة المرور
+                }
+                wide
+              >
+                <select
+                  value={form.role}
+                  onChange={(e) => setForm({ ...form, role: e.target.value as typeof form.role })}
+                >
+                  <option value="input">
+                    {getRoleTitle("input")} ({getRoleDesc("input")})
+                  </option>
+                  <option value="director">
+                    {getRoleTitle("director")} ({getRoleDesc("director")})
+                  </option>
+                  <option value="admin">
+                    {getRoleTitle("admin")} ({getRoleDesc("admin")})
+                  </option>
+                </select>
+              </Field>
+
+              <Field label="كلمة المرور" required>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="6 أحرف على الأقل"
+                />
+              </Field>
+
+              <Field label="البريد الإلكتروني">
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  placeholder="اختياري"
+                />
+              </Field>
+            </div>
+
+            <button type="submit" className="primary-button" disabled={createMutation.isPending}>
+              <Plus size={16} /> {createMutation.isPending ? "جارٍ الحفظ..." : "إضافة المستخدم"}
+            </button>
+          </form>
+
+          {/* Current Accounts List Panel */}
+          <div className="panel users-list-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>الحسابات الحالية</h2>
+                <span>يمكنك تعديل أي مستخدم أو حذفه نهائياً من النظام</span>
+              </div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="outline-button small"
+                  onClick={() => setActiveTab("roles")}
+                  style={{ fontSize: "11px" }}
+                >
+                  <ShieldCheck size={14} /> مسميات الصلاحيات (3)
+                </button>
+                <button
+                  type="button"
+                  className="outline-button small"
+                  onClick={() => setActiveTab("titles")}
+                  style={{ fontSize: "11px" }}
+                >
+                  <Briefcase size={14} /> إدارة المسميات ({jobTitlesList.length})
+                </button>
+              </div>
+            </div>
+
+            {/* Filter & Search Toolbar */}
+            <div style={{ padding: "12px 17px", borderBottom: "1px solid #edf1ee", display: "flex", gap: "10px", flexWrap: "wrap", background: "#fbfdfc" }}>
+              <div style={{ flex: 1, minWidth: "160px", position: "relative", display: "flex", alignItems: "center" }}>
+                <Search size={15} style={{ position: "absolute", right: "10px", color: "#7b918e" }} />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="بحث باسم الموظف، المسمى، أو اسم المستخدم..."
+                  style={{
+                    width: "100%",
+                    height: "34px",
+                    paddingRight: "32px",
+                    paddingLeft: "10px",
+                    fontSize: "11px",
+                    borderRadius: "8px",
+                    border: "1px solid #d2deda",
+                    background: "#ffffff",
+                  }}
+                />
+              </div>
+
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  fontSize: "11px",
+                  borderRadius: "8px",
+                  border: "1px solid #d2deda",
+                  background: "#ffffff",
+                  color: "#2c4c54",
+                  fontWeight: 600,
+                }}
+              >
+                <option value="all">كل الصلاحيات ({usersList.length})</option>
+                <option value="director">{getRoleTitle("director")}</option>
+                <option value="input">{getRoleTitle("input")}</option>
+                <option value="admin">{getRoleTitle("admin")}</option>
+              </select>
+            </div>
+
+            {usersQuery.isLoading ? (
+              <div className="loading-inline">
+                <RefreshCw className="spin" /> جاري تحميل المستخدمين...
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: "#6a827e" }}>
+                <UserRound size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
+                <p style={{ margin: 0, fontWeight: 600 }}>لا يوجد مستخدمون مطابقون لمعايير البحث</p>
+              </div>
+            ) : (
+              <div className="users-list">
+                {filteredUsers.map((account) => (
+                  <div className="user-row" key={account.id}>
+                    <div className="avatar avatar-small">{getInitials(account.name)}</div>
+                    <div className="user-row-copy">
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: "13px" }}>{account.name || account.username}</strong>
+                        <span className={`role-badge-pill badge-role-${account.role}`}>
+                          {roleLabel(account.role)}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginTop: "2px" }}>
+                        <span style={{ color: "#6f8582", fontSize: "11px", direction: "ltr", textAlign: "right" }}>
+                          @{account.username}
+                        </span>
+
+                        {account.jobTitle ? (
+                          <span className="user-job-badge">
+                            <Briefcase size={12} />
+                            {account.jobTitle}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: "10px", color: "#95aba6" }}>بدون مسمى وظيفي</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <button
+                        type="button"
+                        className="outline-button small"
+                        onClick={() => openEditModal(account)}
+                        title="تعديل المستخدم والمسمى الوظيفي"
+                      >
+                        <Settings2 size={14} /> تعديل
                       </button>
-                      <button className="icon-button" onClick={() => setEditingId(null)}>
-                        <X size={16} />
+                      <button
+                        type="button"
+                        className="danger-icon-button"
+                        onClick={() => setUserToDelete(account)}
+                        title="حذف هذا المستخدم نهائياً"
+                      >
+                        <Trash2 size={15} />
                       </button>
                     </div>
-                  ) : (
-                    <button className="outline-button small" onClick={() => setEditingId(account.id)}>
-                      <Settings2 size={14} /> تعديل
-                    </button>
-                  )}
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeTab === "titles" ? (
+        /* Tab 2: Approved Job Titles Management */
+        <div className="panel" style={{ padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px", marginBottom: "20px" }}>
+            <div>
+              <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#163c46", margin: "0 0 4px" }}>
+                قائمة المسميات الوظيفية المعتمدة
+              </h2>
+              <p style={{ margin: 0, fontSize: "12px", color: "#5d7874", maxWidth: "600px", lineHeight: "1.6" }}>
+                يمكنك إضافة مسميات وظيفية جديدة، أو تعديل أي مسمى وظيفي قائم (وسيتم تلقائياً تحديث جميع الموظفين الذين يحملون هذا المسمى في النظام)، أو حذف المسميات غير المرغوبة.
+              </p>
+            </div>
+
+            {/* Add New Job Title Form */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newJobTitleInput.trim()) {
+                  toast.error("يرجى كتابة المسمى الوظيفي");
+                  return;
+                }
+                addJobTitleMutation.mutate({ title: newJobTitleInput.trim() });
+              }}
+              style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%", maxWidth: "420px" }}
+            >
+              <input
+                type="text"
+                value={newJobTitleInput}
+                onChange={(e) => setNewJobTitleInput(e.target.value)}
+                placeholder="أدخل مسمى وظيفي جديد (مثال: مستشار قضائي)..."
+                style={{
+                  flex: 1,
+                  height: "38px",
+                  padding: "0 12px",
+                  borderRadius: "8px",
+                  border: "1px solid #c9d8d3",
+                  fontSize: "12px",
+                }}
+              />
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={addJobTitleMutation.isPending}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                <Plus size={16} /> إضافة مسمى
+              </button>
+            </form>
+          </div>
+
+          {jobTitlesQuery.isLoading ? (
+            <div className="loading-inline">
+              <RefreshCw className="spin" /> جاري تحميل المسميات الوظيفية...
+            </div>
+          ) : (
+            <div className="job-titles-grid">
+              {jobTitlesList.map((title) => {
+                const userCount = titleUsageCounts[title] || 0;
+                return (
+                  <div className="job-title-card" key={title}>
+                    <div className="job-title-info">
+                      <div className="job-title-icon-wrap">
+                        <Briefcase size={18} />
+                      </div>
+                      <div className="job-title-details">
+                        <span className="job-title-name" title={title}>
+                          {title}
+                        </span>
+                        <span className="job-title-count">
+                          {userCount > 0
+                            ? `${userCount} موظف مسجل بهذا المسمى`
+                            : "لا يوجد موظفون مرتبطون حالياً"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="job-title-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        style={{ width: "32px", height: "32px" }}
+                        onClick={() => setEditingJobTitle({ oldTitle: title, newTitle: title })}
+                        title="تعديل المسمى الوظيفي"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-icon-button"
+                        onClick={() => setJobTitleToDelete(title)}
+                        title="حذف هذا المسمى الوظيفي"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
-      </div>
+      ) : (
+        /* Tab 3: System Roles & Permissions Titles Management */
+        <div className="panel" style={{ padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "14px", marginBottom: "20px" }}>
+            <div>
+              <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#163c46", margin: "0 0 4px" }}>
+                إدارة مسميات الصلاحيات والأدوار في النظام
+              </h2>
+              <p style={{ margin: 0, fontSize: "12px", color: "#5d7874", maxWidth: "680px", lineHeight: "1.6" }}>
+                يتضمن النظام 3 مستويات صلاحيات برمجية أساسية. يمكنك هنا تخصيص وتعديل المسمى المعروض لكل صلاحية ووصف مهامها بما يتناسب مع الهيكل الإداري للنيابة العامة، وسيتم تحديث المسميات فوراً في جميع القوائم والشارات والحسابات.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="outline-button"
+              onClick={() => {
+                if (window.confirm("هل تريد استعادة المسميات والوصف الافتراضي للصلاحيات؟")) {
+                  resetRoleDefsMutation.mutate();
+                }
+              }}
+              disabled={resetRoleDefsMutation.isPending}
+              style={{ fontSize: "12px" }}
+            >
+              <RefreshCw size={14} className={resetRoleDefsMutation.isPending ? "spin" : ""} /> استعادة المسميات الافتراضية
+            </button>
+          </div>
+
+          <div className="role-defs-grid">
+            {/* Role 1: input */}
+            <div className="role-def-card">
+              <div className="role-def-header">
+                <div className="role-def-title-area">
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className="role-def-title">{getRoleTitle("input")}</span>
+                    <span className="role-badge-pill badge-role-input">{getRoleTitle("input")}</span>
+                  </div>
+                  <span className="role-def-code">المعرف البرمجي: input</span>
+                </div>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#ebf8ff", color: "#2b6cb0", display: "grid", placeItems: "center" }}>
+                  <UserRound size={18} />
+                </div>
+              </div>
+
+              <div className="role-def-desc">
+                <strong>الوصف والمهام:</strong> {getRoleDesc("input")}
+              </div>
+
+              <div className="role-def-perms">
+                <div className="role-def-perms-title">
+                  <Check size={13} color="#2b6cb0" /> نطاق الصلاحيات المخولة برمجياً:
+                </div>
+                <div className="role-perm-tags">
+                  <span className="role-perm-tag">تسجيل الوارد الجديد</span>
+                  <span className="role-perm-tag">فحص المرفقات والأوليات</span>
+                  <span className="role-perm-tag">رفع المعاملات للاطلاع والتوجيه</span>
+                  <span className="role-perm-tag">متابعة حالات السير والقيد</span>
+                </div>
+              </div>
+
+              <div className="role-def-actions">
+                <button
+                  type="button"
+                  className="primary-button small"
+                  onClick={() => setEditingRoleDef({
+                    key: "input",
+                    title: getRoleTitle("input"),
+                    description: getRoleDesc("input"),
+                  })}
+                >
+                  <Pencil size={13} /> تعديل مسمى الصلاحية والوصف
+                </button>
+              </div>
+            </div>
+
+            {/* Role 2: director */}
+            <div className="role-def-card">
+              <div className="role-def-header">
+                <div className="role-def-title-area">
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className="role-def-title">{getRoleTitle("director")}</span>
+                    <span className="role-badge-pill badge-role-director">{getRoleTitle("director")}</span>
+                  </div>
+                  <span className="role-def-code">المعرف البرمجي: director</span>
+                </div>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#e6fffa", color: "#234e52", display: "grid", placeItems: "center" }}>
+                  <ShieldCheck size={18} />
+                </div>
+              </div>
+
+              <div className="role-def-desc">
+                <strong>الوصف والمهام:</strong> {getRoleDesc("director")}
+              </div>
+
+              <div className="role-def-perms">
+                <div className="role-def-perms-title">
+                  <Check size={13} color="#234e52" /> نطاق الصلاحيات المخولة برمجياً:
+                </div>
+                <div className="role-perm-tags">
+                  <span className="role-perm-tag">الاطلاع الشامل على كافة الملفات</span>
+                  <span className="role-perm-tag">إصدار التوجيهات والقرارات القضائية</span>
+                  <span className="role-perm-tag">التوقيع والاعتماد الرقمي الموثق</span>
+                  <span className="role-perm-tag">لوحة المؤشرات والإحصائيات القضائية</span>
+                </div>
+              </div>
+
+              <div className="role-def-actions">
+                <button
+                  type="button"
+                  className="primary-button small"
+                  onClick={() => setEditingRoleDef({
+                    key: "director",
+                    title: getRoleTitle("director"),
+                    description: getRoleDesc("director"),
+                  })}
+                >
+                  <Pencil size={13} /> تعديل مسمى الصلاحية والوصف
+                </button>
+              </div>
+            </div>
+
+            {/* Role 3: admin */}
+            <div className="role-def-card">
+              <div className="role-def-header">
+                <div className="role-def-title-area">
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className="role-def-title">{getRoleTitle("admin")}</span>
+                    <span className="role-badge-pill badge-role-admin">{getRoleTitle("admin")}</span>
+                  </div>
+                  <span className="role-def-code">المعرف البرمجي: admin</span>
+                </div>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#fdf2e9", color: "#c05621", display: "grid", placeItems: "center" }}>
+                  <UserCog size={18} />
+                </div>
+              </div>
+
+              <div className="role-def-desc">
+                <strong>الوصف والمهام:</strong> {getRoleDesc("admin")}
+              </div>
+
+              <div className="role-def-perms">
+                <div className="role-def-perms-title">
+                  <Check size={13} color="#c05621" /> نطاق الصلاحيات المخولة برمجياً:
+                </div>
+                <div className="role-perm-tags">
+                  <span className="role-perm-tag">إدارة وتعديل وحذف حسابات المستخدمين</span>
+                  <span className="role-perm-tag">إدارة وتعديل المسميات الوظيفية</span>
+                  <span className="role-perm-tag">تعديل مسميات الصلاحيات والأدوار</span>
+                  <span className="role-perm-tag">كامل إعدادات النظام والنسخ الاحتياطي</span>
+                </div>
+              </div>
+
+              <div className="role-def-actions">
+                <button
+                  type="button"
+                  className="primary-button small"
+                  onClick={() => setEditingRoleDef({
+                    key: "admin",
+                    title: getRoleTitle("admin"),
+                    description: getRoleDesc("admin"),
+                  })}
+                >
+                  <Pencil size={13} /> تعديل مسمى الصلاحية والوصف
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit User & Job Title */}
+      {editingUser && (
+        <div className="modal-backdrop" onClick={() => setEditingUser(null)} role="dialog" aria-modal="true">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "520px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div className="avatar avatar-small">{getInitials(editingUser.name)}</div>
+                <div>
+                  <h2 style={{ fontSize: "16px", margin: 0 }}>تعديل بيانات المستخدم والمسمى الوظيفي</h2>
+                  <span style={{ fontSize: "11px", color: "#6a827e", direction: "ltr", display: "inline-block" }}>
+                    @{editingUser.username}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setEditingUser(null)}
+                title="إغلاق"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={submitEditUser} style={{ padding: "18px 22px" }}>
+              <div style={{ display: "grid", gap: "14px" }}>
+                <Field label="اسم الموظف الكامل" required>
+                  <input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    placeholder="الاسم الكامل"
+                  />
+                </Field>
+
+                <Field label="المسمى الوظيفي">
+                  <div style={{ position: "relative" }}>
+                    <input
+                      list="editJobTitlesOptions"
+                      value={editForm.jobTitle}
+                      onChange={(e) => setEditForm({ ...editForm, jobTitle: e.target.value })}
+                      placeholder="اختر مسمى وظيفي أو اكتب مسمى جديد..."
+                    />
+                    <datalist id="editJobTitlesOptions">
+                      {jobTitlesList.map((title) => (
+                        <option key={title} value={title} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <small style={{ color: "#6f8883", fontSize: "10px", marginTop: "4px", display: "block" }}>
+                    يمكنك الاختيار من القائمة أو كتابة أي مسمى وظيفي مخصص.
+                  </small>
+                </Field>
+
+                <Field
+                  label={
+                    <div className="field-label-row">
+                      <span>الصلاحية في النظام</span>
+                      <button
+                        type="button"
+                        className="field-quick-btn"
+                        onClick={() => {
+                          setEditingRoleDef({
+                            key: editForm.role,
+                            title: getRoleTitle(editForm.role),
+                            description: getRoleDesc(editForm.role),
+                          });
+                        }}
+                        title="تعديل مسمى هذه الصلاحية"
+                      >
+                        <Pencil size={11} /> تعديل مسمى الصلاحية
+                      </button>
+                    </div>
+                  }
+                >
+                  <select
+                    value={editForm.role}
+                    onChange={(e) => setEditForm({ ...editForm, role: e.target.value as typeof editForm.role })}
+                  >
+                    <option value="input">{getRoleTitle("input")}</option>
+                    <option value="director">{getRoleTitle("director")}</option>
+                    <option value="admin">{getRoleTitle("admin")}</option>
+                  </select>
+                </Field>
+
+                <Field label="البريد الإلكتروني">
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    placeholder="اختياري"
+                  />
+                </Field>
+
+                <Field label="كلمة المرور الجديدة">
+                  <input
+                    type="password"
+                    value={editForm.newPassword}
+                    onChange={(e) => setEditForm({ ...editForm, newPassword: e.target.value })}
+                    placeholder="اتركها فارغة إذا كنت لا تريد تغييرها"
+                  />
+                  <small style={{ color: "#839995", fontSize: "10px", marginTop: "4px", display: "block" }}>
+                    اترك الحقل فارغاً للحفاظ على كلمة المرور الحالية دون تغيير.
+                  </small>
+                </Field>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "24px", paddingTop: "16px", borderTop: "1px solid #e5edea" }}>
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={() => setEditingUser(null)}
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={updateMutation.isPending}
+                >
+                  <Check size={16} /> {updateMutation.isPending ? "جارٍ الحفظ..." : "حفظ التعديلات"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete User Confirmation */}
+      {userToDelete && (
+        <div className="modal-backdrop" onClick={() => setUserToDelete(null)} role="dialog" aria-modal="true">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "460px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-heading" style={{ borderBottom: "1px solid #fee2e2" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#fef2f2", color: "#dc2626", display: "grid", placeItems: "center" }}>
+                  <Trash2 size={18} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: "16px", margin: 0, color: "#991b1b" }}>تأكيد حذف المستخدم</h2>
+                  <span style={{ fontSize: "11px", color: "#b91c1c" }}>إجراء نهائي لا يمكن التراجع عنه</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setUserToDelete(null)}
+                title="إلغاء"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#2d4d54", lineHeight: "1.6" }}>
+                هل أنت متأكد من رغبتك في حذف حساب المستخدم التالي من النظام؟
+              </p>
+
+              <div style={{ background: "#f8faf9", border: "1px solid #e2ece8", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
+                <div style={{ fontWeight: 700, fontSize: "14px", color: "#163a44", marginBottom: "4px" }}>
+                  {userToDelete.name || userToDelete.username}
+                </div>
+                <div style={{ fontSize: "11px", color: "#617d79", marginBottom: "4px", direction: "ltr", textAlign: "right" }}>
+                  @{userToDelete.username}
+                </div>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+                  <span className={`role-badge-pill badge-role-${userToDelete.role}`}>
+                    {roleLabel(userToDelete.role)}
+                  </span>
+                  {userToDelete.jobTitle && (
+                    <span className="user-job-badge">
+                      <Briefcase size={12} />
+                      {userToDelete.jobTitle}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: "8px", padding: "10px 14px", color: "#9f1239", fontSize: "12px", lineHeight: "1.5" }}>
+                تنبيه: سيتم إزالة الحساب نهائياً ولن يتمكن هذا الموظف من تسجيل الدخول إلى نظام إدارة الأولويات مجدداً.
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={() => setUserToDelete(null)}
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={() => deleteMutation.mutate({ id: userToDelete.id })}
+                  disabled={deleteMutation.isPending}
+                >
+                  <Trash2 size={15} /> {deleteMutation.isPending ? "جارٍ الحذف..." : "نعم، حذف الحساب نهائياً"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Rename / Edit Job Title */}
+      {editingJobTitle && (
+        <div className="modal-backdrop" onClick={() => setEditingJobTitle(null)} role="dialog" aria-modal="true">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "460px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div className="job-title-icon-wrap">
+                  <Briefcase size={18} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: "16px", margin: 0 }}>تعديل المسمى الوظيفي</h2>
+                  <span style={{ fontSize: "11px", color: "#6a827e" }}>
+                    المسمى الحالي: {editingJobTitle.oldTitle}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setEditingJobTitle(null)}
+                title="إغلاق"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!editingJobTitle.newTitle.trim()) {
+                  toast.error("يرجى كتابة المسمى الوظيفي الجديد");
+                  return;
+                }
+                updateJobTitleMutation.mutate({
+                  oldTitle: editingJobTitle.oldTitle,
+                  newTitle: editingJobTitle.newTitle.trim(),
+                });
+              }}
+              style={{ padding: "20px" }}
+            >
+              <Field label="المسمى الوظيفي الجديد" required>
+                <input
+                  type="text"
+                  value={editingJobTitle.newTitle}
+                  onChange={(e) => setEditingJobTitle({ ...editingJobTitle, newTitle: e.target.value })}
+                  placeholder="أدخل المسمى الوظيفي الجديد..."
+                  autoFocus
+                />
+              </Field>
+
+              <div style={{ background: "#f0fdf9", border: "1px solid #bce2d8", borderRadius: "8px", padding: "10px 14px", color: "#134e48", fontSize: "11px", lineHeight: "1.5", marginTop: "12px" }}>
+                ملاحظة: سيتم تحديث هذا المسمى تلقائياً في قائمة المسميات ولدى جميع الموظفين الذين يحملون هذا المسمى حالياً.
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={() => setEditingJobTitle(null)}
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={updateJobTitleMutation.isPending}
+                >
+                  <Check size={16} /> {updateJobTitleMutation.isPending ? "جارٍ التحديث..." : "حفظ التعديل"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Job Title Confirmation */}
+      {jobTitleToDelete && (
+        <div className="modal-backdrop" onClick={() => setJobTitleToDelete(null)} role="dialog" aria-modal="true">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "440px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-heading" style={{ borderBottom: "1px solid #fee2e2" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#fef2f2", color: "#dc2626", display: "grid", placeItems: "center" }}>
+                  <Trash2 size={18} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: "16px", margin: 0, color: "#991b1b" }}>حذف المسمى الوظيفي</h2>
+                  <span style={{ fontSize: "11px", color: "#b91c1c" }}>حذف من قائمة المسميات المعتمدة</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setJobTitleToDelete(null)}
+                title="إلغاء"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#2d4d54", lineHeight: "1.6" }}>
+                هل تريد إزالة المسمى الوظيفي: <strong>«{jobTitleToDelete}»</strong> من قائمة المسميات المعتمدة؟
+              </p>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={() => setJobTitleToDelete(null)}
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={() => deleteJobTitleMutation.mutate({ title: jobTitleToDelete })}
+                  disabled={deleteJobTitleMutation.isPending}
+                >
+                  <Trash2 size={15} /> {deleteJobTitleMutation.isPending ? "جارٍ الحذف..." : "حذف المسمى"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Role Definition */}
+      {editingRoleDef && (
+        <div className="modal-backdrop" onClick={() => setEditingRoleDef(null)} role="dialog" aria-modal="true">
+          <div
+            className="modal-card"
+            style={{ maxWidth: "500px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#eef6f3", color: "#1b5b57", display: "grid", placeItems: "center" }}>
+                  <ShieldCheck size={18} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: "16px", margin: 0 }}>تعديل مسمى الصلاحية والوصف</h2>
+                  <span style={{ fontSize: "11px", color: "#6a827e", direction: "ltr", display: "inline-block" }}>
+                    المعرف البرمجي: {editingRoleDef.key}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setEditingRoleDef(null)}
+                title="إغلاق"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!editingRoleDef.title.trim()) {
+                  toast.error("يرجى كتابة مسمى الصلاحية");
+                  return;
+                }
+                updateRoleDefMutation.mutate({
+                  key: editingRoleDef.key,
+                  title: editingRoleDef.title.trim(),
+                  description: editingRoleDef.description.trim() || undefined,
+                });
+              }}
+              style={{ padding: "20px" }}
+            >
+              <div style={{ display: "grid", gap: "14px" }}>
+                <Field label="مسمى الصلاحية المعروض في النظام" required>
+                  <input
+                    type="text"
+                    value={editingRoleDef.title}
+                    onChange={(e) => setEditingRoleDef({ ...editingRoleDef, title: e.target.value })}
+                    placeholder="مثال: رئيس النيابة العامة، موظف الإدخال والاستقبال..."
+                    autoFocus
+                  />
+                </Field>
+
+                <Field label="الوصف التوضيحي للصلاحية">
+                  <textarea
+                    rows={3}
+                    value={editingRoleDef.description}
+                    onChange={(e) => setEditingRoleDef({ ...editingRoleDef, description: e.target.value })}
+                    placeholder="وصف مختصر للمهام والصلاحيات الممنوحة..."
+                    style={{
+                      width: "100%",
+                      borderRadius: "8px",
+                      border: "1px solid #c9d8d3",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      fontFamily: "inherit",
+                    }}
+                  />
+                </Field>
+
+                {/* Live Preview */}
+                <div style={{ background: "#f8faf9", border: "1px solid #e1ebe7", borderRadius: "10px", padding: "12px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#2d4e56", marginBottom: "8px" }}>
+                    معاينة حية للمسمى في النظام:
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className={`role-badge-pill badge-role-${editingRoleDef.key}`}>
+                      {editingRoleDef.title.trim() || "مسمى الصلاحية"}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "#607d78" }}>
+                      {editingRoleDef.description.trim() || "الوصف التوضيحي..."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px", paddingTop: "14px", borderTop: "1px solid #e5edea" }}>
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={() => setEditingRoleDef(null)}
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={updateRoleDefMutation.isPending}
+                >
+                  <Check size={16} /> {updateRoleDefMutation.isPending ? "جارٍ الحفظ..." : "حفظ المسمى"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
