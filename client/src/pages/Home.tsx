@@ -1676,7 +1676,7 @@ function RegisterForm({ onSaved }: { onSaved: () => void }) {
                 <div className="upload-icon"><ArrowDownToLine size={20} /></div>
                 <div>
                   <strong>اسحب ملف PDF هنا أو اضغط للاختيار</strong>
-                  <span>يتم حفظ النسخة الأصلية للنائب العام ليقوم بالتوجيه والتوقيع عليها</span>
+                  <span>يتم حفظ النسخة الأصلية للوارد</span>
                 </div>
               </>
             )}
