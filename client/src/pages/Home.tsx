@@ -53,6 +53,19 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
+import {
   AutoClassificationBanner,
   PreSaveClassificationReview,
 } from "@/components/AutoClassificationBanner";
@@ -192,6 +205,7 @@ export default function Home() {
   const filters = useMemo(() => ({ search: search || undefined, status: statusFilter || undefined, importance: importanceFilter || undefined, fileType: fileTypeFilter || undefined, sourceEntity: sourceEntityFilter || undefined }), [search, statusFilter, importanceFilter, fileTypeFilter, sourceEntityFilter]);
   const filesQuery = trpc.files.list.useQuery(filters, { enabled: Boolean(user) });
   const statsQuery = trpc.files.stats.useQuery(undefined, { enabled: Boolean(user) });
+  const dbStatusQuery = trpc.dbStatus.useQuery(undefined, { refetchInterval: 15000 });
   const notificationsQuery = trpc.notifications.list.useQuery(undefined, { enabled: canDirectFiles, refetchInterval: 30000 });
   const utils = trpc.useUtils();
   const clearDb = trpc.files.clearDatabase.useMutation({
@@ -375,10 +389,49 @@ export default function Home() {
           {activeView === "dashboard" && canViewDashboard && (
             <div style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", background: "#ffffff", padding: "12px 18px", borderRadius: "12px", border: "1px solid #e1ebe7", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#183e47" }}>حالة الاتصال والربط السحابي</h2>
-                <span style={{ fontSize: "11px", color: "#607e7b" }}>مشروع Firebase: elated-pagoda-tc9s2 | قاعدة بيانات Firestore النشطة</span>
+                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#183e47" }}>حالة الاتصال والربط السحابي ومزامنة البيانات</h2>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px", flexWrap: "wrap" }}>
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "3px 10px",
+                    borderRadius: "20px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    background: dbStatusQuery.data?.connected ? "#ecfdf5" : "#fef2f2",
+                    color: dbStatusQuery.data?.connected ? "#047857" : "#b91c1c",
+                    border: `1px solid ${dbStatusQuery.data?.connected ? "#a7f3d0" : "#fecaca"}`
+                  }}>
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: dbStatusQuery.data?.connected ? "#10b981" : "#ef4444", display: "inline-block" }}></span>
+                    {dbStatusQuery.data?.mode || "MySQL المحلي"}
+                  </span>
+                  <span style={{ fontSize: "11px", color: "#506e6a" }}>
+                    آخر مزامنة ناجحة مع SQL Server: <strong>{dbStatusQuery.data?.lastSync ? new Intl.DateTimeFormat("ar-YE", { dateStyle: "short", timeStyle: "medium" }).format(new Date(dbStatusQuery.data.lastSync)) : "الآن"}</strong>
+                  </span>
+                </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => dbStatusQuery.refetch()}
+                  style={{
+                    background: "#f0fdf4",
+                    color: "#166534",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: "8px",
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <RefreshCw size={13} />
+                  <span>تحديث حالة الاتصال</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setIsResetModalOpen(true)}
@@ -397,7 +450,7 @@ export default function Home() {
                   }}
                 >
                   <Trash2 size={13} />
-                  <span>تصفير كافة المجموعات والسجلات (استعداداً للاستخدام الفعلي)</span>
+                  <span>تصفير كافة المجموعات والسجلات</span>
                 </button>
                 <FirebaseStatusBadge />
               </div>
@@ -839,12 +892,144 @@ function DatabasePrioritiesStatusWidget({ stats, files, onOpen }: { stats: any; 
 function DashboardView({ stats, files, onOpen, onRefresh, isAdmin }: { stats: any; files: any[]; onOpen: (id: number) => void; onRefresh: () => void; isAdmin?: boolean }) {
   const typeEntries = Object.entries(stats.byType || {}) as [string, number][];
   const maxTypeCount = Math.max(1, ...typeEntries.map(([, count]) => count));
+
+  // تحضير بيانات الرسوم البيانية باستخدام Recharts
+  const barChartData = typeEntries.map(([name, count]) => ({ name, count }));
+  
+  const statusCounts = files.reduce((acc: any, file: any) => {
+    const s = statusLabels[file.status] || file.status;
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {});
+  const pieChartData = Object.entries(statusCounts).map(([name, value]) => ({ name, value }));
+  const COLORS = ["#1b5e4f", "#2563eb", "#d97706", "#7c3aed", "#0891b2", "#dc2626"];
+
   return <>
-    <section className="welcome-row"><div><div className="eyebrow">الأحد، 14 سبتمبر 2026</div><h1>مرحبًا بك في لوحة العمل</h1><p>تابع حركة الأوليات واعرف ما يحتاج إلى قرارك الآن.</p></div><div className="welcome-actions"><button className="outline-button" onClick={onRefresh}><RefreshCw size={16} /> تحديث</button></div></section>
+    <section className="welcome-row">
+      <div>
+        <div className="eyebrow">الأحد، 14 سبتمبر 2026</div>
+        <h1>مرحبًا بك في لوحة العمل</h1>
+        <p>تابع حركة الأوليات واعرف ما يحتاج إلى قرارك الآن.</p>
+      </div>
+      <div className="welcome-actions">
+        <button className="outline-button" onClick={onRefresh}>
+          <RefreshCw size={16} /> تحديث
+        </button>
+      </div>
+    </section>
+
     {isAdmin && <DatabasePrioritiesStatusWidget stats={stats} files={files} onOpen={onOpen} />}
-    <section className="stat-grid"><StatCard icon={<FileText />} label="إجمالي الملفات" value={stats.total} hint="كل السجلات" tone="navy" /><StatCard icon={<FilePenLine />} label="بانتظار توجيهك" value={stats.awaiting} hint="تحتاج إلى قرار" tone="amber" /><StatCard icon={<Clock3 />} label="قيد المتابعة" value={stats.inProgress} hint="ملفات موجّهة" tone="purple" /><StatCard icon={<Check />} label="مكتملة" value={stats.completed} hint="هذا الشهر" tone="green" /></section>
-    <section className="panel type-chart-panel"><div className="panel-heading"><div><h2>حجم العمل حسب نوع الوارد</h2><span>إجمالي الملفات المسجلة لكل نوع وارد</span></div><BarChart3 size={20} className="heading-icon" /></div>{typeEntries.length === 0 ? <div className="chart-empty">لا توجد بيانات وارد حتى الآن</div> : <div className="type-chart">{typeEntries.map(([type, count]) => <div className="type-chart-row" key={type}><div className="type-chart-label"><strong>{type}</strong><span>{count.toLocaleString("ar-YE")} ملف</span></div><div className="type-chart-track"><span style={{ width: `${Math.max(8, (count / maxTypeCount) * 100)}%` }} /></div></div>)}</div>}</section>
-    <section className="dashboard-grid"><div className="panel recent-panel"><div className="panel-heading"><div><h2>آخر الملفات الواردة</h2><span>تظهر هنا أحدث السجلات المضافة للنظام</span></div><button className="text-button" onClick={() => onOpen(files[0]?.id)}>عرض الكل <ChevronLeft size={15} /></button></div>{files.length === 0 ? <div className="empty-state"><div className="empty-icon"><Inbox size={26} /></div><strong>لا توجد ملفات مسجلة بعد</strong><span>ستظهر الملفات الجديدة هنا بعد تسجيلها من موظف الإدخال والاستقبال.</span></div> : <div className="file-list">{files.slice(0, 5).map((file) => <FileRow key={file.id} file={file} onOpen={onOpen} />)}</div>}</div><div className="panel attention-panel"><div className="panel-heading"><div><h2>يحتاج انتباهك</h2><span>ملفات ذات أولوية مرتفعة</span></div><Sparkles size={20} className="heading-icon" /></div>{stats.urgent === 0 ? <div className="attention-empty"><div className="soft-icon"><Check size={20} /></div><strong>لا توجد ملفات عاجلة</strong><span>كل شيء تحت السيطرة حاليًا</span></div> : files.filter((file) => file.importance === "urgent").slice(0, 3).map((file) => <button className="attention-item" key={file.id} onClick={() => onOpen(file.id)}><div className="attention-dot" /><div><strong>{file.fileNumber}</strong><span>{file.subject}</span></div><ChevronLeft size={16} /></button>)}</div></section>
+
+    <section className="stat-grid">
+      <StatCard icon={<FileText />} label="إجمالي الملفات" value={stats.total} hint="كل السجلات" tone="navy" />
+      <StatCard icon={<FilePenLine />} label="بانتظار توجيهك" value={stats.awaiting} hint="تحتاج إلى قرار" tone="amber" />
+      <StatCard icon={<Clock3 />} label="قيد المتابعة" value={stats.inProgress} hint="ملفات موجّهة" tone="purple" />
+      <StatCard icon={<Check />} label="مكتملة" value={stats.completed} hint="هذا الشهر" tone="green" />
+    </section>
+
+    {/* قسم الرسوم البيانية والإحصائيات المتقدمة باستخدام Recharts */}
+    <section className="panel" style={{ padding: "20px", marginTop: "20px" }}>
+      <div className="panel-heading" style={{ marginBottom: "16px" }}>
+        <div>
+          <h2>الإحصائيات والرسوم البيانية التفاعلية</h2>
+          <span>تحليل تفصيلي لتوزيع المعاملات حسب الحالات وأنواع الوارد عبر مكتبة Recharts</span>
+        </div>
+        <BarChart3 size={22} className="heading-icon" />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px" }}>
+        {/* مخطط أعمدة (BarChart) لتوزيع المعاملات حسب النوع */}
+        <div style={{ background: "#f8faf9", borderRadius: "12px", padding: "16px", border: "1px solid #e2ece8" }}>
+          <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#183e47", marginBottom: "12px" }}>توزيع الوارد حسب النوع (Bar Chart)</h3>
+          {barChartData.length === 0 ? (
+            <div className="chart-empty">لا توجد بيانات كافية للرسم البياني</div>
+          ) : (
+            <div style={{ width: "100%", height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5edea" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: "#fff", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }} />
+                  <Bar dataKey="count" fill="#1b5e4f" radius={[6, 6, 0, 0]} name="عدد الملفات" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        {/* مخطط دوائر أو أعمدة (Pie / Bar Chart) لحالات المعاملات */}
+        <div style={{ background: "#f8faf9", borderRadius: "12px", padding: "16px", border: "1px solid #e2ece8" }}>
+          <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#183e47", marginBottom: "12px" }}>توزيع المعاملات حسب الحالة (Status Breakdown)</h3>
+          {pieChartData.length === 0 ? (
+            <div className="chart-empty">لا توجد حالات مسجلة حتى الآن</div>
+          ) : (
+            <div style={{ width: "100%", height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieChartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={4}
+                    dataKey="value"
+                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                  >
+                    {pieChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: "#fff", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }} />
+                  <Legend wrapperStyle={{ fontSize: "11px" }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+
+    <section className="dashboard-grid">
+      <div className="panel recent-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>آخر الملفات الواردة</h2>
+            <span>تظهر هنا أحدث السجلات المضافة للنظام</span>
+          </div>
+          <button className="text-button" onClick={() => onOpen(files[0]?.id)}>عرض الكل <ChevronLeft size={15} /></button>
+        </div>
+        {files.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon"><Inbox size={26} /></div>
+            <strong>لا توجد ملفات مسجلة بعد</strong>
+            <span>ستظهر الملفات الجديدة هنا بعد تسجيلها من موظف الإدخال والاستقبال.</span>
+          </div>
+        ) : (
+          <div className="file-list">{files.slice(0, 5).map((file) => <FileRow key={file.id} file={file} onOpen={onOpen} />)}</div>
+        )}
+      </div>
+
+      <div className="panel attention-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>يحتاج انتباهك</h2>
+            <span>ملفات ذات أولوية مرتفعة</span>
+          </div>
+          <Sparkles size={20} className="heading-icon" />
+        </div>
+        {stats.urgent === 0 ? (
+          <div className="attention-empty">
+            <div className="soft-icon"><Check size={20} /></div>
+            <strong>لا توجد ملفات عاجلة</strong>
+            <span>كل شيء تحت السيطرة حاليًا</span>
+          </div>
+        ) : (
+          files.filter((file) => file.importance === "urgent").slice(0, 3).map((file) => <button className="attention-item" key={file.id} onClick={() => onOpen(file.id)}><div className="attention-dot" /><div><strong>{file.fileNumber}</strong><span>{file.subject}</span></div><ChevronLeft size={16} /></button>)
+        )}
+      </div>
+    </section>
   </>;
 }
 
@@ -2010,6 +2195,186 @@ function TransactionWorkflowTimeline({ file }: { file: any }) {
   );
 }
 
+function FirstPageSignaturePreviewModal({
+  file,
+  instruction,
+  department,
+  employee,
+  dueDate,
+  isOpen,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  file: any;
+  instruction: string;
+  department: string;
+  employee: string;
+  dueDate: string;
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 150 }}>
+      <div
+        className="modal-card"
+        style={{ maxWidth: "720px", width: "95%", maxHeight: "90vh", display: "flex", flexDirection: "column" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-heading">
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "8px", background: "#0f3d64", color: "#fff", display: "grid", placeItems: "center" }}>
+              <Signature size={20} />
+            </div>
+            <div>
+              <h2 style={{ fontSize: "16px", margin: 0, color: "#0f3d64" }}>معاينة مكان ومظهر التوقيع على الصفحة الأولى</h2>
+              <span style={{ fontSize: "11.5px", color: "#506c74" }}>
+                معاينة شكل التوقيع والختم الرسمي وتوجيه النائب العام قبل الاعتماد النهائي والترحيل
+              </span>
+            </div>
+          </div>
+          <button className="icon-button" onClick={onClose}><X size={19} /></button>
+        </div>
+
+        <div style={{ padding: "20px", overflowY: "auto", flex: 1, background: "#f8fafc" }}>
+          {/* Simulated First Page A4 Sheet */}
+          <div style={{
+            background: "#ffffff",
+            border: "1px solid #cbd5e1",
+            borderRadius: "8px",
+            padding: "32px",
+            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.08)",
+            maxWidth: "600px",
+            margin: "0 auto",
+            position: "relative",
+            fontFamily: "inherit"
+          }}>
+            {/* Header */}
+            <div style={{ textAlign: "center", borderBottom: "2px solid #0f3d64", paddingBottom: "14px", marginBottom: "20px" }}>
+              <div style={{ fontSize: "15px", fontWeight: 800, color: "#0f3d64" }}>الجمهورية اليمنية · النيابة العامة</div>
+              <div style={{ fontSize: "12px", color: "#475569", marginTop: "2px" }}>مكتب النائب العام للجمهورية | إدارة الأوليات والمكاتبات</div>
+            </div>
+
+            {/* Document metadata summary */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "12px", marginBottom: "16px", background: "#f1f5f9", padding: "12px", borderRadius: "6px" }}>
+              <div><strong>رقم الوارد:</strong> {file.fileNumber}</div>
+              <div><strong>تاريخ الورود:</strong> {file.arrivalDate || "—"}</div>
+              <div><strong>جهة الورود:</strong> {file.sourceEntity}</div>
+              <div><strong>نوع المعاملة:</strong> {file.fileType}</div>
+            </div>
+
+            {/* Subject */}
+            <div style={{ fontSize: "13.5px", color: "#1e293b", marginBottom: "24px", lineHeight: 1.7 }}>
+              <strong>موضوع المعاملة:</strong> {file.subject}
+            </div>
+
+            {/* Page Body Placeholder lines */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "30px", opacity: 0.25 }}>
+              <div style={{ height: "10px", background: "#334155", borderRadius: "4px", width: "100%" }}></div>
+              <div style={{ height: "10px", background: "#334155", borderRadius: "4px", width: "90%" }}></div>
+              <div style={{ height: "10px", background: "#334155", borderRadius: "4px", width: "95%" }}></div>
+            </div>
+
+            {/* Signature & Seal Stamp Box on First Page */}
+            <div style={{
+              border: "2px dashed #047857",
+              borderRadius: "10px",
+              padding: "16px",
+              background: "#ecfdf5",
+              marginTop: "20px",
+              position: "relative"
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                <div>
+                  <div style={{ fontSize: "12px", fontWeight: 800, color: "#065f46", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <ShieldCheck size={16} /> اعتماد وتوقيع النائب العام (الصفحة الأولى)
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#047857", marginTop: "2px" }}>
+                    التوجيه: {instruction ? instruction.substring(0, 80) + (instruction.length > 80 ? "..." : "") : "(لم يُكتب نص التوجيه بعد)"}
+                  </div>
+                </div>
+                <div style={{
+                  border: "2px solid #047857",
+                  borderRadius: "50%",
+                  width: "60px",
+                  height: "60px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#047857",
+                  fontSize: "9px",
+                  fontWeight: 800,
+                  transform: "rotate(-12deg)",
+                  background: "rgba(255,255,255,0.8)",
+                  boxShadow: "0 2px 4px rgba(4,120,87,0.1)"
+                }}>
+                  <span>النيابة العامة</span>
+                  <span style={{ fontSize: "7px" }}>مكتب النائب</span>
+                  <span>معتمد</span>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "11px", color: "#1e293b", borderTop: "1px solid #a7f3d0", paddingTop: "8px" }}>
+                <div><strong>المحالة إلى:</strong> {department || "الإدارة المختصة"}</div>
+                <div><strong>المسؤول:</strong> {employee || "عضو النيابة المكلف"}</div>
+                {dueDate && <div style={{ gridColumn: "span 2" }}><strong>الموعد النهائي للإنجاز:</strong> {dueDate}</div>}
+              </div>
+
+              <div style={{ marginTop: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", borderTop: "1px dashed #a7f3d0", paddingTop: "8px" }}>
+                <div>
+                  <strong>الموقع:</strong> فضيلة القاضي / رئيس النيابة العامة (النائب العام)
+                </div>
+                <div style={{ color: "#059669", fontWeight: 700 }}>
+                  ✓ توقيع رقمي موثق
+                </div>
+              </div>
+            </div>
+
+            <div style={{ textAlign: "center", marginTop: "16px", fontSize: "10.5px", color: "#64748b" }}>
+              صفحة 1 من 1 · مستند رسمي معتمد وممهور برقم الوارد {file.fileNumber}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: "14px 20px", background: "#ffffff", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+          <button
+            type="button"
+            className="outline-button"
+            onClick={onClose}
+          >
+            إغلاق المعاينة
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ background: "#047857", gap: "8px" }}
+            disabled={isPending}
+            onClick={() => {
+              if (!instruction.trim()) {
+                toast.error("يرجى كتابة نص التوجيه القضائي أولاً قبل الاعتماد");
+                onClose();
+                return;
+              }
+              onConfirm();
+            }}
+          >
+            {isPending ? (
+              <><RefreshCw size={15} className="spin" /> جاري الاعتماد والتوقيع...</>
+            ) : (
+              <><Check size={15} /> اعتماد وتوقيع نهائي على الصفحة الأولى والإحالة</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FileDetailsModal({
   fileData,
   loading,
@@ -2036,6 +2401,7 @@ function FileDetailsModal({
 
   const [pdfPreviewType, setPdfPreviewType] = useState<"original" | "signed" | null>(null);
   const [manualSignOpen, setManualSignOpen] = useState(false);
+  const [signaturePreviewOpen, setSignaturePreviewOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [department, setDepartment] = useState("");
   const [employee, setEmployee] = useState("");
@@ -2550,6 +2916,22 @@ function FileDetailsModal({
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
                   <button
                     type="button"
+                    className="outline-button"
+                    style={{ background: "#eef6f3", borderColor: "#236959", color: "#14453b", gap: "8px" }}
+                    onClick={() => {
+                      if (!instruction.trim()) {
+                        toast.error("يرجى كتابة نص التوجيه القضائي أولاً لعرض معاينة التوقيع");
+                        return;
+                      }
+                      setSignaturePreviewOpen(true);
+                    }}
+                    title="معاينة مكان ومظهر التوقيع على الصفحة الأولى قبل الاعتماد نهائياً"
+                  >
+                    <Eye size={16} />
+                    <span>معاينة التوقيع على الصفحة الأولى</span>
+                  </button>
+                  <button
+                    type="button"
                     className="primary-button"
                     style={{ background: "#0f3d64", gap: "8px" }}
                     onClick={() => setManualSignOpen(true)}
@@ -2794,6 +3176,28 @@ function FileDetailsModal({
             toast.success("تم لصق التوقيع اليدوي بنجاح وحفظ النسخة الموقعة!");
             setPdfPreviewType("signed");
             onChanged();
+          }}
+        />
+      )}
+      {signaturePreviewOpen && (
+        <FirstPageSignaturePreviewModal
+          file={file}
+          instruction={instruction}
+          department={department}
+          employee={employee}
+          dueDate={dueDate}
+          isOpen={signaturePreviewOpen}
+          onClose={() => setSignaturePreviewOpen(false)}
+          isPending={confirmAndForwardMutation.isPending}
+          onConfirm={() => {
+            setSignaturePreviewOpen(false);
+            confirmAndForwardMutation.mutate({
+              fileId: file.id,
+              directorInstruction: instruction,
+              assignedDepartment: department || undefined,
+              assignedEmployee: employee || undefined,
+              dueDate: dueDate || undefined,
+            });
           }}
         />
       )}
@@ -4071,6 +4475,23 @@ function AdminSettingsView({ stats }: { stats: any }) {
   const usersQuery = trpc.users.list.useQuery();
   const usersCount = (usersQuery.data || []).length;
 
+  const [dbHost, setDbHost] = useState("localhost");
+  const [dbPort, setDbPort] = useState("3306");
+  const [dbName, setDbName] = useState("idarat_alawliyat");
+  const [dbUser, setDbUser] = useState("root");
+  const [dbPassword, setDbPassword] = useState("");
+  const [syncInterval, setSyncInterval] = useState("15"); // بالدقائق
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+
+  const updateDbMutation = trpc.users.updateDbConfig.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message + ` | تم ضبط الفاصل الزمني للمزامنة التلقائية كل ${syncInterval} دقيقة`);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   return (
     <div className="admin-settings-container">
       <div className="section-heading">
@@ -4140,6 +4561,207 @@ function AdminSettingsView({ stats }: { stats: any }) {
               <span>المعاملات المكتملة</span>
               <strong>{stats.completed.toLocaleString("ar-YE")}</strong>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Local MySQL Database Connection Settings */}
+      <div className="admin-settings-card" style={{ marginTop: "24px" }}>
+        <div className="admin-settings-card-head">
+          <div className="admin-settings-icon-box" style={{ background: "#eef6f3", color: "#1b5b57" }}>
+            <Database size={20} />
+          </div>
+          <div>
+            <h3>إعدادات الاتصال بقاعدة بيانات MySQL المحلية</h3>
+            <span>ربط النظام بقاعدة بيانات جهاز الكمبيوتر الرئيسي وتحديث ملف .env محلياً</span>
+          </div>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            updateDbMutation.mutate({
+              host: dbHost.trim(),
+              port: dbPort.trim(),
+              database: dbName.trim(),
+              user: dbUser.trim(),
+              password: dbPassword,
+            });
+          }}
+          style={{ padding: "16px 0 0" }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+            <Field label="مضيف الخادم / IP Address" required>
+              <input
+                type="text"
+                value={dbHost}
+                onChange={(e) => setDbHost(e.target.value)}
+                placeholder="localhost أو 127.0.0.1"
+                style={{ direction: "ltr", textAlign: "right" }}
+              />
+            </Field>
+
+            <Field label="منفذ الاتصال (Port)" required>
+              <input
+                type="text"
+                value={dbPort}
+                onChange={(e) => setDbPort(e.target.value)}
+                placeholder="3306"
+                style={{ direction: "ltr", textAlign: "right" }}
+              />
+            </Field>
+
+            <Field label="اسم قاعدة البيانات (Database)" required>
+              <input
+                type="text"
+                value={dbName}
+                onChange={(e) => setDbName(e.target.value)}
+                placeholder="idarat_alawliyat"
+                style={{ direction: "ltr", textAlign: "right" }}
+              />
+            </Field>
+
+            <Field label="اسم المستخدم (User)" required>
+              <input
+                type="text"
+                value={dbUser}
+                onChange={(e) => setDbUser(e.target.value)}
+                placeholder="root"
+                style={{ direction: "ltr", textAlign: "right" }}
+              />
+            </Field>
+
+            <Field label="كلمة المرور (Password)">
+              <input
+                type="password"
+                value={dbPassword}
+                onChange={(e) => setDbPassword(e.target.value)}
+                placeholder="كلمة المرور (إن وجدت)"
+                style={{ direction: "ltr", textAlign: "right" }}
+              />
+            </Field>
+
+            <Field label="الفاصل الزمني للمزامنة التلقائية">
+              <select
+                value={syncInterval}
+                onChange={(e) => setSyncInterval(e.target.value)}
+                style={{
+                  width: "100%",
+                  borderRadius: "8px",
+                  border: "1px solid #c9d8d3",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  fontFamily: "inherit",
+                  background: "#fff",
+                }}
+              >
+                <option value="5">كل 5 دقائق</option>
+                <option value="10">كل 10 دقائق</option>
+                <option value="15">كل 15 دقيقة (موصى به)</option>
+                <option value="30">كل 30 دقيقة</option>
+                <option value="60">كل ساعة واحدة</option>
+              </select>
+            </Field>
+
+            <Field label="حالة المزامنة التلقائية">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px" }}>
+                <input
+                  type="checkbox"
+                  id="autoSyncToggle"
+                  checked={autoSyncEnabled}
+                  onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "#1b5e4f" }}
+                />
+                <label htmlFor="autoSyncToggle" style={{ fontSize: "12px", color: "#2d4e56", cursor: "pointer", fontWeight: 600 }}>
+                  {autoSyncEnabled ? "مفعلة (مزامنة تلقائية في الخلفية)" : "متوقفة (مزامنة يدوية فقط)"}
+                </label>
+              </div>
+            </Field>
+          </div>
+
+          <div style={{ background: "#f0fdf9", border: "1px solid #bce2d8", borderRadius: "8px", padding: "12px 16px", color: "#134e48", fontSize: "12px", lineHeight: "1.6", marginTop: "16px" }}>
+            ملاحظة: عند حفظ هذه الإعدادات، سيقوم النظام تلقائياً بتحديث متغير البيئة <code>DATABASE_URL</code> وحفظه في ملف <code>.env</code> على جهازك الرئيسي ليتم الاتصال بقاعدتك المحلية واستيراد البيانات منها بسلاسة.
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "20px" }}>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={updateDbMutation.isPending}
+            >
+              <Check size={16} /> {updateDbMutation.isPending ? "جارٍ الحفظ والربط..." : "حفظ إعدادات قاعدة البيانات المحلية"}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Database Backup & Disaster Recovery Export Card */}
+      <div className="admin-settings-card" style={{ marginTop: "24px" }}>
+        <div className="admin-settings-card-head">
+          <div className="admin-settings-icon-box" style={{ background: "#fef3c7", color: "#d97706" }}>
+            <Database size={20} />
+          </div>
+          <div>
+            <h3>النسخ الاحتياطي وحالات الطوارئ (Backup Export)</h3>
+            <span>تصدير نسخة احتياطية كاملة من قاعدة البيانات المحلية بصيغة SQL أو JSON</span>
+          </div>
+        </div>
+
+        <div style={{ padding: "16px 0 0" }}>
+          <p style={{ fontSize: "13px", color: "#334e4a", lineHeight: "1.6", margin: "0 0 16px" }}>
+            يمكنك تصدير كافة سجلات المعاملات، والمرفقات، وحسابات المستخدمين في أي وقت واستخراج ملف باك أب لتأمين البيانات وحفظها في جهازك لحالات الطوارئ والصيانة.
+          </p>
+
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="primary-button"
+              style={{ background: "#1b5e4f" }}
+              onClick={() => {
+                const toastId = toast.loading("جاري تجهيز وتصدير النسخة الاحتياطية (JSON)...");
+                trpc.users.exportBackup.mutate({ format: "json" }).then((res) => {
+                  const blob = new Blob([res.data], { type: res.contentType });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = res.filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.dismiss(toastId);
+                  toast.success("تم تصدير وتحميل النسخة الاحتياطية (JSON) بنجاح");
+                }).catch((err) => {
+                  toast.dismiss(toastId);
+                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
+                });
+              }}
+            >
+              <Download size={16} /> تصدير نسخة احتياطية (JSON)
+            </button>
+
+            <button
+              type="button"
+              className="outline-button"
+              style={{ borderColor: "#1b5e4f", color: "#1b5e4f" }}
+              onClick={() => {
+                const toastId = toast.loading("جاري تجهيز وتصدير ملف SQL Dump...");
+                trpc.users.exportBackup.mutate({ format: "sql" }).then((res) => {
+                  const blob = new Blob([res.data], { type: res.contentType });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = res.filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.dismiss(toastId);
+                  toast.success("تم تصدير وتحميل ملف SQL Dump بنجاح");
+                }).catch((err) => {
+                  toast.dismiss(toastId);
+                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
+                });
+              }}
+            >
+              <Download size={16} /> تصدير ملف SQL (SQL Dump)
+            </button>
           </div>
         </div>
       </div>

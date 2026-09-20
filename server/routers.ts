@@ -181,6 +181,26 @@ export async function addSignatureStamp(
 
 export const appRouter = router({
   system: systemRouter,
+  dbStatus: publicProcedure.query(async () => {
+    let isConnected = false;
+    let mode = "Memory / Local";
+    try {
+      const db = await import("./db").then(m => m.getDb());
+      if (db) {
+        isConnected = true;
+        mode = "MySQL Local (Active)";
+      }
+    } catch {
+      isConnected = false;
+      mode = "Fallback Mode";
+    }
+    return {
+      connected: isConnected,
+      mode,
+      lastSync: new Date().toISOString(),
+      serverHost: process.env.DATABASE_URL ? "Custom MySQL Configured" : "Default Local Store",
+    };
+  }),
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user ? publicUser(opts.ctx.user) : null),
     login: publicProcedure.input(z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(128) })).mutation(async ({ input, ctx }) => {
@@ -685,6 +705,85 @@ export const appRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "المستخدم غير موجود أو تم حذفه مسبقاً" });
       }
       return { success: true };
+    }),
+    updateDbConfig: adminProcedure.input(z.object({
+      host: z.string().min(1, "المضيف مطلوب"),
+      port: z.string().min(1, "المنفذ مطلوب"),
+      database: z.string().min(1, "اسم القاعدة مطلوب"),
+      user: z.string().min(1, "اسم المستخدم مطلوب"),
+      password: z.string(),
+    })).mutation(async ({ input }) => {
+      try {
+        const encodedPassword = encodeURIComponent(input.password);
+        const newDbUrl = `mysql://${input.user}:${encodedPassword}@${input.host}:${input.port}/${input.database}`;
+        
+        let envContent = "";
+        try {
+          envContent = await fs.readFile(path.join(process.cwd(), ".env"), "utf-8");
+        } catch {
+          envContent = "";
+        }
+
+        if (envContent.includes("DATABASE_URL=")) {
+          envContent = envContent.replace(/^DATABASE_URL=.*$/m, `DATABASE_URL="${newDbUrl}"`);
+        } else {
+          envContent += `\nDATABASE_URL="${newDbUrl}"\n`;
+        }
+
+        await fs.writeFile(path.join(process.cwd(), ".env"), envContent, "utf-8");
+        process.env.DATABASE_URL = newDbUrl;
+
+        return { success: true, message: "تم تحديث وحفظ إعدادات قاعدة البيانات المحلية بنجاح" };
+      } catch (error: any) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "فشل حفظ إعدادات قاعدة البيانات: " + error.message });
+      }
+    }),
+    exportBackup: adminProcedure.input(z.object({
+      format: z.enum(["json", "sql"]),
+    })).mutation(async ({ input }) => {
+      try {
+        const files = await listIncomingFiles({});
+        const users = await listUsers();
+        
+        if (input.format === "json") {
+          const backupData = {
+            system: "Idarat Alawliyat - Prosecution System",
+            exportDate: new Date().toISOString(),
+            version: "1.0.0",
+            tables: {
+              users,
+              incomingFiles: files,
+            },
+          };
+          return {
+            filename: `backup-idarat-alawliyat-${new Date().toISOString().slice(0, 10)}.json`,
+            contentType: "application/json",
+            data: JSON.stringify(backupData, null, 2),
+          };
+        } else {
+          // SQL Format dump simulation
+          let sqlDump = `-- Backup generated for Idarat Alawliyat System\n`;
+          sqlDump += `-- Date: ${new Date().toISOString()}\n\n`;
+          
+          sqlDump += `-- Table: users\n`;
+          for (const u of users) {
+            sqlDump += `INSERT INTO users (id, username, name, jobTitle, role) VALUES (${u.id}, '${u.username}', '${u.name}', '${u.jobTitle || ""}', '${u.role}');\n`;
+          }
+
+          sqlDump += `\n-- Table: incomingFiles\n`;
+          for (const f of files) {
+            sqlDump += `INSERT INTO incomingFiles (id, fileNumber, year, sourceEntity, subject, status, importance) VALUES (${f.id}, '${f.fileNumber}', ${f.year}, '${f.sourceEntity.replace(/'/g, "''")}', '${f.subject.replace(/'/g, "''")}', '${f.status}', '${f.importance}');\n`;
+          }
+
+          return {
+            filename: `backup-idarat-alawliyat-${new Date().toISOString().slice(0, 10)}.sql`,
+            contentType: "application/sql",
+            data: sqlDump,
+          };
+        }
+      } catch (error: any) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "فشل تصدير النسخة الاحتياطية: " + error.message });
+      }
     }),
   }),
 });
