@@ -767,6 +767,26 @@ export async function deleteIncomingFile(id: number) {
   return false;
 }
 
+export async function clearAllIncomingFiles() {
+  try {
+    const db = await getDb();
+    if (db) {
+      await db.delete(fileHistory);
+      await db.delete(notifications);
+      await db.delete(incomingFiles);
+      return true;
+    }
+  } catch (err) {
+    console.warn("[Database] clearAllIncomingFiles fallback to memory:", err);
+  }
+
+  inMemoryFiles.length = 0;
+  inMemoryHistory.length = 0;
+  inMemoryNotifications.length = 0;
+  inMemoryFileIdCounter = 1;
+  return true;
+}
+
 export async function addFileHistory(values: typeof fileHistory.$inferInsert) {
   try {
     const db = await getDb();

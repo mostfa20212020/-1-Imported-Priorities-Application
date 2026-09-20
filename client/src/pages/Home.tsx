@@ -56,6 +56,8 @@ import {
   PreSaveClassificationReview,
 } from "@/components/AutoClassificationBanner";
 import { ManualSignatureModal } from "@/components/ManualSignatureModal";
+import { FirebaseStatusBadge } from "@/components/FirebaseStatusBadge";
+import { SystemResetModal } from "@/components/SystemResetModal";
 
 const statusLabels: Record<string, string> = {
   new: "جديد",
@@ -166,10 +168,23 @@ export default function Home() {
   const [fileTypeFilter, setFileTypeFilter] = useState("");
   const [sourceEntityFilter, setSourceEntityFilter] = useState("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "priority">("date_desc");
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const filters = useMemo(() => ({ search: search || undefined, status: statusFilter || undefined, importance: importanceFilter || undefined, fileType: fileTypeFilter || undefined, sourceEntity: sourceEntityFilter || undefined }), [search, statusFilter, importanceFilter, fileTypeFilter, sourceEntityFilter]);
   const filesQuery = trpc.files.list.useQuery(filters, { enabled: Boolean(user) });
   const statsQuery = trpc.files.stats.useQuery(undefined, { enabled: Boolean(user) });
   const notificationsQuery = trpc.notifications.list.useQuery(undefined, { enabled: canDirectFiles, refetchInterval: 30000 });
+  const utils = trpc.useUtils();
+  const clearDb = trpc.files.clearDatabase.useMutation({
+    onSuccess: () => {
+      utils.files.list.invalidate();
+      utils.files.stats.invalidate();
+      toast.success("تم تصفير قاعدة البيانات بنجاح. يمكنك الآن إدخال أول وارد للتجربة.");
+      selectView("register");
+    },
+    onError: (err: any) => {
+      toast.error(`خطأ في تصفير قاعدة البيانات: ${err.message}`);
+    }
+  });
   const selectedInput = useMemo(() => ({ id: selectedId || 0 }), [selectedId]);
   const selectedQuery = trpc.files.get.useQuery(selectedInput, { enabled: Boolean(selectedId) });
   const files = filesQuery.data || [];
@@ -337,6 +352,40 @@ export default function Home() {
         {notificationsOpen && <NotificationsPanel notifications={notificationsQuery.data || []} onClose={() => setNotificationsOpen(false)} onOpenFile={(id) => { setSelectedId(id); setNotificationsOpen(false); }} />}
 
         <div className="page-content">
+          {activeView === "dashboard" && canViewDashboard && (
+            <div style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", background: "#ffffff", padding: "12px 18px", borderRadius: "12px", border: "1px solid #e1ebe7", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#183e47" }}>حالة الاتصال والربط السحابي</h2>
+                <span style={{ fontSize: "11px", color: "#607e7b" }}>مشروع Firebase: elated-pagoda-tc9s2 | قاعدة بيانات Firestore النشطة</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => setIsResetModalOpen(true)}
+                  style={{
+                    background: "#fee2e2",
+                    color: "#991b1b",
+                    border: "1px solid #fca5a5",
+                    borderRadius: "8px",
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <Trash2 size={13} />
+                  <span>تصفير كافة المجموعات والسجلات (استعداداً للاستخدام الفعلي)</span>
+                </button>
+                <FirebaseStatusBadge />
+              </div>
+            </div>
+          )}
+
+          <SystemResetModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} onSuccess={() => selectView("register")} />
+
           {canViewDashboard && (
             <DirectorQuickFilters
               files={sortedFiles}
@@ -2270,6 +2319,63 @@ function FileDetailsModal({
                 >
                   <Download size={14} /> تحميل
                 </a>
+              </div>
+            </div>
+
+            {/* معاينة الورقة الأولى من المستند المرفق مع التوقيع الآلي */}
+            <div style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "12px", padding: "18px", marginTop: "16px", marginBottom: "16px", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", paddingBottom: "10px", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#0f3d64", fontWeight: 700, fontSize: "14px" }}>
+                  <FileText size={18} />
+                  <span>معاينة الورقة الأولى من المستند المرفق (الصفحة الرسمية والاعتماد الآلي)</span>
+                </div>
+                <span style={{ fontSize: "11px", background: "#ecfdf5", color: "#065f46", border: "1px solid #a7f3d0", padding: "3px 10px", borderRadius: "20px", fontWeight: 600 }}>
+                  ✓ مُوقّع ومختوم آلياً على الصفحة الأولى
+                </span>
+              </div>
+
+              <div
+                onClick={() => setPdfPreviewType(file.isSigned ? "signed" : "original")}
+                style={{
+                  background: "#f8fafc",
+                  border: "1px dashed #94a3b8",
+                  borderRadius: "10px",
+                  padding: "20px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                title="انقر لفتح المعاينة الكاملة"
+              >
+                <div style={{ maxWidth: "600px", margin: "0 auto", background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "24px", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)" }}>
+                  <div style={{ textAlign: "center", borderBottom: "2px solid #0f3d64", paddingBottom: "12px", marginBottom: "16px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f3d64" }}>الجمهورية اليمنية · النيابة العامة</div>
+                    <div style={{ fontSize: "11px", color: "#64748b" }}>مكتب رئيس النيابة العامة | إدارة الأوليات والمكاتبات</div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "12px", marginBottom: "14px", background: "#f8fafc", padding: "10px", borderRadius: "6px" }}>
+                    <div><strong>رقم الوارد:</strong> {file.fileNumber}</div>
+                    <div><strong>تاريخ الوورد:</strong> {formatDate(file.arrivalDate)}</div>
+                    <div><strong>جهة الورود:</strong> {file.sourceEntity}</div>
+                    <div><strong>نوع المعاملة:</strong> {file.fileType}</div>
+                  </div>
+
+                  <div style={{ fontSize: "13px", color: "#1e293b", marginBottom: "16px", lineHeight: 1.6 }}>
+                    <strong>موضوع المعاملة:</strong> {file.subject}
+                  </div>
+
+                  <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "14px", marginTop: "14px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: "#047857" }}>التوقيع والختم الإلكتروني (الصفحة الأولى):</div>
+                      <div style={{ color: "#334155" }}>{file.signatureName || "فضيلة القاضي / رئيس النيابة العامة"} - {file.signatureTitle || "رئيس النيابة العامة"}</div>
+                    </div>
+                    <div style={{ border: "1px dashed #047857", borderRadius: "6px", padding: "6px 12px", color: "#047857", fontWeight: 700, fontSize: "11px", background: "#ecfdf5" }}>
+                      ختم الاعتماد الرسمي
+                    </div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "center", marginTop: "10px", fontSize: "11px", color: "#64748b" }}>
+                  (انقر هنا لعرض المستند PDF بالكامل مع كافة الصفحات والصفحة الموقعة)
+                </div>
               </div>
             </div>
 

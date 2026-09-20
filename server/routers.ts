@@ -25,6 +25,7 @@ import {
   markNotificationRead,
   updateIncomingFile,
   deleteIncomingFile,
+  clearAllIncomingFiles,
   getUserByUsername,
   listUsers,
   createLocalUser,
@@ -221,8 +222,23 @@ export const appRouter = router({
         notes: input.notes,
         registeredBy: actorName(ctx),
         currentResponsible: "النائب العام للتوجيه والتوقيع (المرحلة الأولى)",
+        isSigned: true,
+        signatureName: "فضيلة القاضي / رئيس النيابة العامة",
+        signatureTitle: "رئيس النيابة العامة",
+        signedAt: new Date(),
       });
       if (!file) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر حفظ الملف" });
+
+      try {
+        const signedBytes = await generateProsecutionPdf(file, "signed");
+        const storedSigned = await storagePut(`incoming/signed/${file.year}/${file.fileNumber}.pdf`, signedBytes, "application/pdf");
+        await updateIncomingFile(file.id, {
+          signedFileKey: storedSigned.key,
+          signedFileUrl: storedSigned.url,
+        });
+      } catch (err) {
+        console.warn("[PDF] Auto-sign on first page failed:", err);
+      }
       await addFileHistory({
         fileId: file.id,
         actorName: actorName(ctx),
@@ -500,7 +516,7 @@ export const appRouter = router({
 
       return updated;
     }),
-    adminUpdate: adminProcedure.input(z.object({
+    adminUpdate: directorProcedure.input(z.object({
       fileId: z.number().int().positive(),
       fileNumber: z.string().min(1).max(64).optional(),
       year: z.number().int().min(2000).max(2200).optional(),
@@ -546,13 +562,17 @@ export const appRouter = router({
       });
       return updated;
     }),
-    adminDelete: adminProcedure.input(z.object({
+    adminDelete: directorProcedure.input(z.object({
       fileId: z.number().int().positive(),
     })).mutation(async ({ input, ctx }) => {
       const current = await getIncomingFile(input.fileId);
       if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
       await deleteIncomingFile(input.fileId);
       return { success: true };
+    }),
+    clearDatabase: directorProcedure.mutation(async () => {
+      await clearAllIncomingFiles();
+      return { success: true, message: "تم تصفير قاعدة البيانات بنجاح" };
     }),
   }),
   notifications: router({
