@@ -4492,6 +4492,8 @@ function AdminSettingsView({ stats }: { stats: any }) {
     },
   });
 
+  const exportBackupMutation = trpc.users.exportBackup.useMutation();
+
   return (
     <div className="admin-settings-container">
       <div className="section-heading">
@@ -4717,9 +4719,11 @@ function AdminSettingsView({ stats }: { stats: any }) {
               type="button"
               className="primary-button"
               style={{ background: "#1b5e4f" }}
-              onClick={() => {
+              disabled={exportBackupMutation.isPending}
+              onClick={async () => {
                 const toastId = toast.loading("جاري تجهيز وتصدير النسخة الاحتياطية (JSON)...");
-                trpc.users.exportBackup.mutate({ format: "json" }).then((res) => {
+                try {
+                  const res = await exportBackupMutation.mutateAsync({ format: "json" });
                   const blob = new Blob([res.data], { type: res.contentType });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -4729,10 +4733,10 @@ function AdminSettingsView({ stats }: { stats: any }) {
                   URL.revokeObjectURL(url);
                   toast.dismiss(toastId);
                   toast.success("تم تصدير وتحميل النسخة الاحتياطية (JSON) بنجاح");
-                }).catch((err) => {
+                } catch (err: any) {
                   toast.dismiss(toastId);
-                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
-                });
+                  toast.error(err?.message || "فشل تصدير النسخة الاحتياطية");
+                }
               }}
             >
               <Download size={16} /> تصدير نسخة احتياطية (JSON)
@@ -4742,9 +4746,11 @@ function AdminSettingsView({ stats }: { stats: any }) {
               type="button"
               className="outline-button"
               style={{ borderColor: "#1b5e4f", color: "#1b5e4f" }}
-              onClick={() => {
+              disabled={exportBackupMutation.isPending}
+              onClick={async () => {
                 const toastId = toast.loading("جاري تجهيز وتصدير ملف SQL Dump...");
-                trpc.users.exportBackup.mutate({ format: "sql" }).then((res) => {
+                try {
+                  const res = await exportBackupMutation.mutateAsync({ format: "sql" });
                   const blob = new Blob([res.data], { type: res.contentType });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -4754,10 +4760,10 @@ function AdminSettingsView({ stats }: { stats: any }) {
                   URL.revokeObjectURL(url);
                   toast.dismiss(toastId);
                   toast.success("تم تصدير وتحميل ملف SQL Dump بنجاح");
-                }).catch((err) => {
+                } catch (err: any) {
                   toast.dismiss(toastId);
-                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
-                });
+                  toast.error(err?.message || "فشل تصدير النسخة الاحتياطية");
+                }
               }}
             >
               <Download size={16} /> تصدير ملف SQL (SQL Dump)
