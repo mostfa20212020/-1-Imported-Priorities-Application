@@ -12,6 +12,8 @@ import { authenticateLocalRequest } from "./localAuth";
 import { getIncomingFile, listIncomingFiles, updateIncomingFile } from "../db";
 import { getFileBytes, storagePut } from "../storage";
 import { generateProsecutionPdf, ensureDefaultPdfs } from "../pdfService";
+import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
+import { getUsers } from "../../src/db/users.ts";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -135,6 +137,16 @@ async function startServer() {
     } catch (err) {
       console.error("[PDF] View signed error:", err);
       res.status(500).json({ error: "Failed to load signed PDF" });
+    }
+  });
+
+  app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const usersList = await getUsers();
+      res.json(usersList);
+    } catch (error: any) {
+      console.error("Failed to fetch users:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch users" });
     }
   });
 

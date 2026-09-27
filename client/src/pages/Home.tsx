@@ -280,7 +280,8 @@ export default function Home() {
   const selectedInput = useMemo(() => ({ id: selectedId || 0 }), [selectedId]);
   const selectedQuery = trpc.files.get.useQuery(selectedInput, { enabled: Boolean(selectedId) });
   const files = filesQuery.data || [];
-  const sortedFiles = useMemo(() => [...files].sort((a, b) => sortBy === "priority" ? ({ urgent: 0, important: 1, normal: 2 }[a.importance] - { urgent: 0, important: 1, normal: 2 }[b.importance]) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime() : sortBy === "date_asc" ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [files, sortBy]);
+  const priorityOrder: Record<string, number> = { urgent: 0, important: 1, normal: 2 };
+  const sortedFiles = useMemo(() => [...files].sort((a, b) => sortBy === "priority" ? ((priorityOrder[a.importance] ?? 2) - (priorityOrder[b.importance] ?? 2)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime() : sortBy === "date_asc" ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [files, sortBy]);
 
   if (loading) return <LoadingScreen />;
   if (!user) return <LoginScreen />;

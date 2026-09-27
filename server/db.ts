@@ -1,9 +1,7 @@
-import { and, desc, eq, like, or } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { randomBytes, scryptSync } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { ENV } from "./_core/env";
+import { db } from "../src/db/index.ts";
 import {
   fileHistory,
   FileHistory,
@@ -15,62 +13,17 @@ import {
   InsertUser,
   User,
   users,
-} from "../drizzle/schema";
-
-let _db: ReturnType<typeof drizzle> | null = null;
-
-function parseDbUrl(raw?: string): string | null {
-  if (!raw) return null;
-  let clean = raw.trim();
-  while (clean.endsWith(")") && !clean.includes("(")) {
-    clean = clean.slice(0, -1).trim();
-  }
-  if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-    clean = clean.slice(1, -1).trim();
-  }
-  if (!clean) return null;
-
-  // Detect unconfigured template strings like mysql://user:password@host:port/database
-  if (
-    clean.includes("user:password") ||
-    clean.includes("host:port") ||
-    clean.includes("@host/") ||
-    clean.includes("@host:") ||
-    clean === "mysql://" ||
-    clean === "postgresql://"
-  ) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(clean);
-    if (!parsed.hostname || parsed.hostname === "host") return null;
-    if (parsed.port && !/^\d+$/.test(parsed.port)) return null;
-    return clean;
-  } catch {
-    return null;
-  }
-}
+} from "../src/db/schema.ts";
 
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    const validUrl = parseDbUrl(process.env.DATABASE_URL);
-    if (validUrl) {
-      try {
-        _db = drizzle(validUrl);
-      } catch (error) {
-        console.info("[Database] Falling back to in-memory store:", (error as any)?.message || error);
-        _db = null;
-      }
-    } else {
-      _db = null;
-    }
+  if (process.env.SQL_HOST || process.env.SQL_USER || process.env.DATABASE_URL) {
+    return db;
   }
-  return _db;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// In-Memory Fallback Store (for zero-config local run / AI Studio preview)
+// In-Memory Fallback Store (for zero-config local run / test / fallback)
 // ---------------------------------------------------------------------------
 
 function hashPassword(password: string): string {
@@ -84,6 +37,7 @@ let inMemoryUserIdCounter = 4;
 const inMemoryUsers: User[] = [
   {
     id: 1,
+    uid: null,
     openId: "director-default-openid",
     username: "director",
     passwordHash: defaultPasswordHash,
@@ -98,6 +52,7 @@ const inMemoryUsers: User[] = [
   },
   {
     id: 2,
+    uid: null,
     openId: "reception-default-openid",
     username: "reception",
     passwordHash: defaultPasswordHash,
@@ -112,6 +67,7 @@ const inMemoryUsers: User[] = [
   },
   {
     id: 3,
+    uid: null,
     openId: "admin-default-openid",
     username: "admin",
     passwordHash: defaultPasswordHash,
@@ -345,17 +301,17 @@ const inMemoryNotifications: Notification[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Database & Mock Operations
+// Database Operations (PostgreSQL via Cloud SQL Drizzle ORM)
 // ---------------------------------------------------------------------------
 
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   try {
-    const db = await getDb();
-    if (db) {
+    const database = await getDb();
+    if (database) {
       const values: InsertUser = { openId: user.openId };
       const updateSet: Record<string, unknown> = {};
-      const textFields = ["name", "email", "loginMethod"] as const;
+      const textFields = ["name", "email", "loginMethod", "uid"] as const;
       for (const field of textFields) {
         if (user[field] !== undefined) {
           values[field] = user[field] ?? null;
@@ -376,7 +332,13 @@ export async function upsertUser(user: InsertUser): Promise<void> {
         values.role = "admin";
         updateSet.role = "admin";
       }
-      await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+      await database
+        .insert(users)
+        .values(values)
+        .onConflictDoUpdate({
+          target: users.openId,
+          set: updateSet,
+        });
       return;
     }
   } catch (err) {
@@ -388,11 +350,13 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.name !== undefined) existing.name = user.name;
     if (user.email !== undefined) existing.email = user.email;
     if (user.role !== undefined) existing.role = user.role;
+    if (user.uid !== undefined) existing.uid = user.uid;
     existing.lastSignedIn = user.lastSignedIn ?? new Date();
     existing.updatedAt = new Date();
   } else {
     inMemoryUsers.push({
       id: inMemoryUserIdCounter++,
+      uid: user.uid ?? null,
       openId: user.openId,
       username: user.username ?? `user_${Date.now()}`,
       passwordHash: user.passwordHash ?? null,
@@ -410,9 +374,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
 export async function getUserByOpenId(openId: string) {
   try {
-    const db = await getDb();
-    if (db) {
-      const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+    const database = await getDb();
+    if (database) {
+      const result = await database.select().from(users).where(eq(users.openId, openId)).limit(1);
       if (result[0]) return result[0];
     }
   } catch (err) {
@@ -424,9 +388,9 @@ export async function getUserByOpenId(openId: string) {
 export async function getUserByUsername(username: string) {
   const norm = username.trim().toLowerCase();
   try {
-    const db = await getDb();
-    if (db) {
-      const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
+    const database = await getDb();
+    if (database) {
+      const result = await database.select().from(users).where(eq(users.username, username)).limit(1);
       if (result[0]) return result[0];
     }
   } catch (err) {
@@ -437,11 +401,12 @@ export async function getUserByUsername(username: string) {
 
 export async function listUsers() {
   try {
-    const db = await getDb();
-    if (db) {
-      return await db
+    const database = await getDb();
+    if (database) {
+      return await database
         .select({
           id: users.id,
+          uid: users.uid,
           openId: users.openId,
           username: users.username,
           name: users.name,
@@ -460,8 +425,9 @@ export async function listUsers() {
   }
   return [...inMemoryUsers]
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(({ id, openId, username, name, jobTitle, email, loginMethod, role, createdAt, lastSignedIn }) => ({
+    .map(({ id, uid, openId, username, name, jobTitle, email, loginMethod, role, createdAt, lastSignedIn }) => ({
       id,
+      uid,
       openId,
       username,
       name,
@@ -476,16 +442,17 @@ export async function listUsers() {
 
 export async function createLocalUser(values: InsertUser) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.insert(users).values(values);
-      return getUserByUsername(values.username || "");
+    const database = await getDb();
+    if (database) {
+      const [created] = await database.insert(users).values(values).returning();
+      if (created) return created;
     }
   } catch (err) {
     console.warn("[Database] createLocalUser fallback to memory:", err);
   }
   const newUser: User = {
     id: inMemoryUserIdCounter++,
+    uid: values.uid ?? null,
     openId: values.openId || `user_${Date.now()}`,
     username: values.username || null,
     passwordHash: values.passwordHash || null,
@@ -504,11 +471,14 @@ export async function createLocalUser(values: InsertUser) {
 
 export async function updateLocalUser(id: number, values: Partial<InsertUser>) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.update(users).set({ ...values, updatedAt: new Date() }).where(eq(users.id, id));
-      const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
-      if (result[0]) return result[0];
+    const database = await getDb();
+    if (database) {
+      const [updated] = await database
+        .update(users)
+        .set({ ...values, updatedAt: new Date() })
+        .where(eq(users.id, id))
+        .returning();
+      if (updated) return updated;
     }
   } catch (err) {
     console.warn("[Database] updateLocalUser fallback to memory:", err);
@@ -527,9 +497,9 @@ export async function updateLocalUser(id: number, values: Partial<InsertUser>) {
 
 export async function deleteLocalUser(id: number): Promise<boolean> {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.delete(users).where(eq(users.id, id));
+    const database = await getDb();
+    if (database) {
+      await database.delete(users).where(eq(users.id, id));
       return true;
     }
   } catch (err) {
@@ -575,7 +545,7 @@ export async function updateJobTitle(oldTitle: string, newTitle: string): Promis
   const oTrimmed = oldTitle.trim();
   const nTrimmed = newTitle.trim();
   if (!nTrimmed) return inMemoryJobTitles;
-  
+
   const idx = inMemoryJobTitles.indexOf(oTrimmed);
   if (idx !== -1) {
     inMemoryJobTitles[idx] = nTrimmed;
@@ -583,11 +553,10 @@ export async function updateJobTitle(oldTitle: string, newTitle: string): Promis
     inMemoryJobTitles.push(nTrimmed);
   }
 
-  // Also update users who have oldTitle to the new title
   try {
-    const db = await getDb();
-    if (db) {
-      await db.update(users).set({ jobTitle: nTrimmed, updatedAt: new Date() }).where(eq(users.jobTitle, oTrimmed));
+    const database = await getDb();
+    if (database) {
+      await database.update(users).set({ jobTitle: nTrimmed, updatedAt: new Date() }).where(eq(users.jobTitle, oTrimmed));
     }
   } catch (err) {
     console.warn("[Database] updateJobTitle users fallback to memory:", err);
@@ -672,7 +641,6 @@ export async function resetRoleDefinitions(): Promise<Record<RoleKey, { title: s
   return inMemoryRoleDefinitions;
 }
 
-
 export async function listIncomingFiles(filters: {
   search?: string;
   status?: string;
@@ -681,26 +649,26 @@ export async function listIncomingFiles(filters: {
   sourceEntity?: string;
 }) {
   try {
-    const db = await getDb();
-    if (db) {
+    const database = await getDb();
+    if (database) {
       const conditions = [];
-      if (filters.status) conditions.push(eq(incomingFiles.status, filters.status as IncomingFile["status"]));
-      if (filters.importance) conditions.push(eq(incomingFiles.importance, filters.importance as IncomingFile["importance"]));
+      if (filters.status) conditions.push(eq(incomingFiles.status, filters.status));
+      if (filters.importance) conditions.push(eq(incomingFiles.importance, filters.importance));
       if (filters.fileType) conditions.push(eq(incomingFiles.fileType, filters.fileType));
-      if (filters.sourceEntity) conditions.push(like(incomingFiles.sourceEntity, `%${filters.sourceEntity}%`));
+      if (filters.sourceEntity) conditions.push(ilike(incomingFiles.sourceEntity, `%${filters.sourceEntity}%`));
       if (filters.search) {
         const query = `%${filters.search}%`;
         conditions.push(
           or(
-            like(incomingFiles.fileNumber, query),
-            like(incomingFiles.subject, query),
-            like(incomingFiles.sourceEntity, query),
-            like(incomingFiles.assignedDepartment, query),
-            like(incomingFiles.assignedEmployee, query),
+            ilike(incomingFiles.fileNumber, query),
+            ilike(incomingFiles.subject, query),
+            ilike(incomingFiles.sourceEntity, query),
+            ilike(incomingFiles.assignedDepartment, query),
+            ilike(incomingFiles.assignedEmployee, query),
           ),
         );
       }
-      return await db
+      return await database
         .select()
         .from(incomingFiles)
         .where(conditions.length ? and(...conditions) : undefined)
@@ -741,9 +709,9 @@ export async function listIncomingFiles(filters: {
 
 export async function getIncomingFile(id: number) {
   try {
-    const db = await getDb();
-    if (db) {
-      const result = await db.select().from(incomingFiles).where(eq(incomingFiles.id, id)).limit(1);
+    const database = await getDb();
+    if (database) {
+      const result = await database.select().from(incomingFiles).where(eq(incomingFiles.id, id)).limit(1);
       if (result[0]) return result[0];
     }
   } catch (err) {
@@ -754,9 +722,9 @@ export async function getIncomingFile(id: number) {
 
 export async function getFileHistory(fileId: number) {
   try {
-    const db = await getDb();
-    if (db) {
-      return await db.select().from(fileHistory).where(eq(fileHistory.fileId, fileId)).orderBy(desc(fileHistory.createdAt));
+    const database = await getDb();
+    if (database) {
+      return await database.select().from(fileHistory).where(eq(fileHistory.fileId, fileId)).orderBy(desc(fileHistory.createdAt));
     }
   } catch (err) {
     console.warn("[Database] getFileHistory fallback to memory:", err);
@@ -768,9 +736,9 @@ export async function getFileHistory(fileId: number) {
 
 export async function getFileStats() {
   try {
-    const db = await getDb();
-    if (db) {
-      const rows = await db
+    const database = await getDb();
+    if (database) {
+      const rows = await database
         .select({ status: incomingFiles.status, importance: incomingFiles.importance, fileType: incomingFiles.fileType })
         .from(incomingFiles);
 
@@ -790,9 +758,9 @@ export async function getFileStats() {
 
       return {
         ...result,
-        dbEngine: "MySQL / Drizzle ORM",
+        dbEngine: "PostgreSQL (Cloud SQL) / Drizzle ORM",
         isConnectedToExternalDb: true,
-        source: "قاعدة بيانات علائقية متصلة (MySQL)",
+        source: "قاعدة بيانات سحابية علائقية (Cloud SQL - PostgreSQL)",
         lastSyncedAt: new Date().toISOString(),
       };
     }
@@ -810,8 +778,8 @@ export async function getFileStats() {
     urgent: 0,
     byType: {} as Record<string, number>,
     dbEngine: "Drizzle Schema / In-Memory SQL Store",
-    isConnectedToExternalDb: Boolean(process.env.DATABASE_URL && parseDbUrl(process.env.DATABASE_URL)),
-    source: process.env.DATABASE_URL ? "قاعدة بيانات SQL مخصصة" : "قاعدة بيانات النظام (الذاكرة النشطة المتطابقة مع الـ Schema)",
+    isConnectedToExternalDb: false,
+    source: "قاعدة بيانات النظام المدمجة",
     lastSyncedAt: new Date().toISOString(),
   };
   for (const f of inMemoryFiles) {
@@ -827,9 +795,9 @@ export async function getFileStats() {
 
 export async function getNextIncomingFileNumber(): Promise<{ nextNumber: number; formatted: string }> {
   try {
-    const db = await getDb();
-    if (db) {
-      const rows = await db.select({ fileNumber: incomingFiles.fileNumber }).from(incomingFiles);
+    const database = await getDb();
+    if (database) {
+      const rows = await database.select({ fileNumber: incomingFiles.fileNumber }).from(incomingFiles);
       let maxNum = 0;
       for (const row of rows) {
         if (!row.fileNumber) continue;
@@ -861,18 +829,10 @@ export async function getNextIncomingFileNumber(): Promise<{ nextNumber: number;
 
 export async function createIncomingFile(values: InsertIncomingFile) {
   try {
-    const db = await getDb();
-    if (db) {
-      const result = await db.insert(incomingFiles).values(values);
-      const insertId = Number((result as any).insertId ?? (result as any)[0]?.insertId);
-      if (Number.isFinite(insertId) && insertId > 0) return await getIncomingFile(insertId);
-      const fallback = await db
-        .select()
-        .from(incomingFiles)
-        .where(eq(incomingFiles.fileNumber, values.fileNumber))
-        .orderBy(desc(incomingFiles.id))
-        .limit(1);
-      if (fallback[0]) return fallback[0];
+    const database = await getDb();
+    if (database) {
+      const [created] = await database.insert(incomingFiles).values(values).returning();
+      if (created) return created;
     }
   } catch (err) {
     console.warn("[Database] createIncomingFile fallback to memory:", err);
@@ -887,7 +847,7 @@ export async function createIncomingFile(values: InsertIncomingFile) {
     fileType: values.fileType,
     subject: values.subject,
     importance: values.importance ?? "normal",
-    status: values.status ?? "new",
+    status: values.status ?? "PENDING_AG",
     originalFileKey: values.originalFileKey ?? null,
     originalFileUrl: values.originalFileUrl ?? null,
     originalFileName: values.originalFileName ?? null,
@@ -917,11 +877,14 @@ export async function createIncomingFile(values: InsertIncomingFile) {
 
 export async function updateIncomingFile(id: number, values: Partial<InsertIncomingFile>) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.update(incomingFiles).set({ ...values, updatedAt: new Date() }).where(eq(incomingFiles.id, id));
-      const row = await getIncomingFile(id);
-      if (row) return row;
+    const database = await getDb();
+    if (database) {
+      const [updated] = await database
+        .update(incomingFiles)
+        .set({ ...values, updatedAt: new Date() })
+        .where(eq(incomingFiles.id, id))
+        .returning();
+      if (updated) return updated;
     }
   } catch (err) {
     console.warn("[Database] updateIncomingFile fallback to memory:", err);
@@ -935,11 +898,11 @@ export async function updateIncomingFile(id: number, values: Partial<InsertIncom
 
 export async function deleteIncomingFile(id: number) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.delete(fileHistory).where(eq(fileHistory.fileId, id));
-      await db.delete(notifications).where(eq(notifications.fileId, id));
-      await db.delete(incomingFiles).where(eq(incomingFiles.id, id));
+    const database = await getDb();
+    if (database) {
+      await database.delete(fileHistory).where(eq(fileHistory.fileId, id));
+      await database.delete(notifications).where(eq(notifications.fileId, id));
+      await database.delete(incomingFiles).where(eq(incomingFiles.id, id));
       return true;
     }
   } catch (err) {
@@ -962,11 +925,11 @@ export async function deleteIncomingFile(id: number) {
 
 export async function clearAllIncomingFiles() {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.delete(fileHistory);
-      await db.delete(notifications);
-      await db.delete(incomingFiles);
+    const database = await getDb();
+    if (database) {
+      await database.delete(fileHistory);
+      await database.delete(notifications);
+      await database.delete(incomingFiles);
       return true;
     }
   } catch (err) {
@@ -982,9 +945,9 @@ export async function clearAllIncomingFiles() {
 
 export async function addFileHistory(values: typeof fileHistory.$inferInsert) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.insert(fileHistory).values(values);
+    const database = await getDb();
+    if (database) {
+      await database.insert(fileHistory).values(values);
       return;
     }
   } catch (err) {
@@ -1006,9 +969,9 @@ export async function addFileHistory(values: typeof fileHistory.$inferInsert) {
 
 export async function createNotification(values: typeof notifications.$inferInsert) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.insert(notifications).values(values);
+    const database = await getDb();
+    if (database) {
+      await database.insert(notifications).values(values);
       return;
     }
   } catch (err) {
@@ -1032,9 +995,9 @@ export async function createNotification(values: typeof notifications.$inferInse
 
 export async function listNotifications(recipientOpenId: string) {
   try {
-    const db = await getDb();
-    if (db) {
-      return await db
+    const database = await getDb();
+    if (database) {
+      return await database
         .select()
         .from(notifications)
         .where(or(eq(notifications.recipientOpenId, recipientOpenId), eq(notifications.recipientRole, "director")))
@@ -1052,9 +1015,9 @@ export async function listNotifications(recipientOpenId: string) {
 
 export async function markNotificationRead(id: number) {
   try {
-    const db = await getDb();
-    if (db) {
-      await db.update(notifications).set({ readAt: new Date() }).where(eq(notifications.id, id));
+    const database = await getDb();
+    if (database) {
+      await database.update(notifications).set({ readAt: new Date() }).where(eq(notifications.id, id));
       return;
     }
   } catch (err) {
@@ -1103,7 +1066,6 @@ export async function getFileAnnotations(fileId: number, docType: string = "orig
   if (inMemoryAnnotations.has(key)) {
     return inMemoryAnnotations.get(key) || [];
   }
-  // Try reading from .local_storage
   try {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -1120,7 +1082,6 @@ export async function getFileAnnotations(fileId: number, docType: string = "orig
 export async function saveFileAnnotations(fileId: number, docType: string = "original", annotations: DocumentAnnotationRecord[]): Promise<DocumentAnnotationRecord[]> {
   const key = getAnnotationsKey(fileId, docType);
   inMemoryAnnotations.set(key, annotations);
-  // Persist to .local_storage
   try {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
