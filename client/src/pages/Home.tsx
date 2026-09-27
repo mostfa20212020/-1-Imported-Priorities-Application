@@ -50,7 +50,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   BarChart,
@@ -70,6 +70,7 @@ import {
   PreSaveClassificationReview,
 } from "@/components/AutoClassificationBanner";
 import { ManualSignatureModal } from "@/components/ManualSignatureModal";
+import { PdfAnnotationLayer } from "@/components/PdfAnnotationLayer";
 import { FirebaseStatusBadge } from "@/components/FirebaseStatusBadge";
 import { SystemResetModal } from "@/components/SystemResetModal";
 
@@ -219,6 +220,63 @@ export default function Home() {
       toast.error(`خطأ في تصفير قاعدة البيانات: ${err.message}`);
     }
   });
+  const prevConnectedRef = useRef<boolean | undefined>(undefined);
+
+  const retryDbConnection = useCallback(async () => {
+    const loadingId = toast.loading("جاري محاولة إعادة الاتصال بقاعدة بيانات MySQL ومزامنة البيانات...", {
+      id: "retry-db-connecting",
+    });
+    try {
+      const result = await dbStatusQuery.refetch();
+      toast.dismiss(loadingId);
+      if (result.data?.connected) {
+        toast.dismiss("db-sync-disconnected-toast");
+        toast.success("تمت استعادة الاتصال بنجاح مع خادم MySQL ومزامنة قاعدة البيانات!", {
+          id: "db-sync-reconnected",
+          duration: 5000,
+        });
+        return true;
+      } else {
+        triggerDisconnectToast();
+        return false;
+      }
+    } catch {
+      toast.dismiss(loadingId);
+      triggerDisconnectToast();
+      return false;
+    }
+  }, [dbStatusQuery]);
+
+  const triggerDisconnectToast = useCallback(() => {
+    toast.error("انقطاع في المزامنة بين قاعدة البيانات المحلية وخادم MySQL", {
+      id: "db-sync-disconnected-toast",
+      duration: Infinity,
+      description: "تعذر التحقق من مزامنة البيانات بين قاعدة البيانات المحلية وخادم MySQL. يرجى التحقق من اتصال الشبكة أو الخادم ثم المحاولة مجدداً.",
+      action: {
+        label: "محاولة إعادة الاتصال",
+        onClick: () => {
+          retryDbConnection();
+        },
+      },
+    });
+  }, [retryDbConnection]);
+
+  useEffect(() => {
+    if (dbStatusQuery.isLoading) return;
+    const isConnected = dbStatusQuery.data?.connected;
+
+    if (isConnected === false || dbStatusQuery.isError) {
+      triggerDisconnectToast();
+    } else if (isConnected === true && prevConnectedRef.current === false) {
+      toast.dismiss("db-sync-disconnected-toast");
+      toast.success("تمت استعادة الاتصال بنجاح مع خادم MySQL ومزامنة قاعدة البيانات!", {
+        id: "db-sync-reconnected",
+        duration: 4000,
+      });
+    }
+    prevConnectedRef.current = isConnected;
+  }, [dbStatusQuery.data?.connected, dbStatusQuery.isError, dbStatusQuery.isLoading, triggerDisconnectToast]);
+
   const selectedInput = useMemo(() => ({ id: selectedId || 0 }), [selectedId]);
   const selectedQuery = trpc.files.get.useQuery(selectedInput, { enabled: Boolean(selectedId) });
   const files = filesQuery.data || [];
@@ -414,7 +472,17 @@ export default function Home() {
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <button
                   type="button"
-                  onClick={() => dbStatusQuery.refetch()}
+                  onClick={() => {
+                    const tId = toast.loading("جاري فحص وتحديث حالة الاتصال...", { id: "refreshing-db-status" });
+                    dbStatusQuery.refetch().then((res) => {
+                      toast.dismiss(tId);
+                      if (res.data?.connected) {
+                        toast.success("الاتصال مستقر مع قاعدة بيانات MySQL ومزامنة السجلات نشطة.");
+                      } else {
+                        triggerDisconnectToast();
+                      }
+                    });
+                  }}
                   style={{
                     background: "#f0fdf4",
                     color: "#166534",
@@ -428,10 +496,58 @@ export default function Home() {
                     alignItems: "center",
                     gap: "6px",
                   }}
+                  title="التحقق من حالة الاتصال الحالية بقاعدة البيانات"
                 >
                   <RefreshCw size={13} />
                   <span>تحديث حالة الاتصال</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={triggerDisconnectToast}
+                  style={{
+                    background: "#fff1f2",
+                    color: "#be123c",
+                    border: "1px solid #fecdd3",
+                    borderRadius: "8px",
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  title="عرض تنبيه انقطاع المزامنة Toast في أعلى الشاشة مع زر إعادة المحاولة"
+                >
+                  <AlertTriangle size={13} />
+                  <span>تجربة تنبيه انقطاع المزامنة</span>
+                </button>
+
+                {!dbStatusQuery.data?.connected && (
+                  <button
+                    type="button"
+                    onClick={retryDbConnection}
+                    style={{
+                      background: "#dc2626",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "6px 12px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      boxShadow: "0 2px 8px rgba(220, 38, 38, 0.25)",
+                    }}
+                    title="محاولة إعادة الاتصال الفوري بخادم MySQL"
+                  >
+                    <RefreshCw size={13} />
+                    <span>محاولة إعادة الاتصال</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsResetModalOpen(true)}
@@ -1910,6 +2026,7 @@ function PdfViewerModal({ file: initialFile, initialType = "original", onClose }
   const [zoom, setZoom] = useState<number>(100);
   const [manualSignOpen, setManualSignOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const pdfFrameRef = useRef<HTMLDivElement | null>(null);
 
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -2037,12 +2154,20 @@ function PdfViewerModal({ file: initialFile, initialType = "original", onClose }
           </div>
         </div>
 
-        <div className="pdf-frame-wrapper">
+        <div className="pdf-frame-wrapper" ref={pdfFrameRef}>
           <iframe
             key={`${pdfUrl}-${zoom}-${refreshKey}`}
             src={`${pdfUrl}#zoom=${zoom}`}
             className="pdf-iframe"
             title={`معاينة PDF - وارد ${currentFile.fileNumber}`}
+          />
+          <PdfAnnotationLayer
+            fileId={currentFile.id}
+            fileNumber={currentFile.fileNumber}
+            docType={docType}
+            currentUser={user}
+            containerRef={pdfFrameRef}
+            zoom={zoom}
           />
         </div>
 
@@ -4719,11 +4844,9 @@ function AdminSettingsView({ stats }: { stats: any }) {
               type="button"
               className="primary-button"
               style={{ background: "#1b5e4f" }}
-              disabled={exportBackupMutation.isPending}
-              onClick={async () => {
+              onClick={() => {
                 const toastId = toast.loading("جاري تجهيز وتصدير النسخة الاحتياطية (JSON)...");
-                try {
-                  const res = await exportBackupMutation.mutateAsync({ format: "json" });
+                exportBackupMutation.mutateAsync({ format: "json" }).then((res: any) => {
                   const blob = new Blob([res.data], { type: res.contentType });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -4733,10 +4856,10 @@ function AdminSettingsView({ stats }: { stats: any }) {
                   URL.revokeObjectURL(url);
                   toast.dismiss(toastId);
                   toast.success("تم تصدير وتحميل النسخة الاحتياطية (JSON) بنجاح");
-                } catch (err: any) {
+                }).catch((err: any) => {
                   toast.dismiss(toastId);
-                  toast.error(err?.message || "فشل تصدير النسخة الاحتياطية");
-                }
+                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
+                });
               }}
             >
               <Download size={16} /> تصدير نسخة احتياطية (JSON)
@@ -4746,11 +4869,9 @@ function AdminSettingsView({ stats }: { stats: any }) {
               type="button"
               className="outline-button"
               style={{ borderColor: "#1b5e4f", color: "#1b5e4f" }}
-              disabled={exportBackupMutation.isPending}
-              onClick={async () => {
+              onClick={() => {
                 const toastId = toast.loading("جاري تجهيز وتصدير ملف SQL Dump...");
-                try {
-                  const res = await exportBackupMutation.mutateAsync({ format: "sql" });
+                exportBackupMutation.mutateAsync({ format: "sql" }).then((res: any) => {
                   const blob = new Blob([res.data], { type: res.contentType });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
@@ -4760,10 +4881,10 @@ function AdminSettingsView({ stats }: { stats: any }) {
                   URL.revokeObjectURL(url);
                   toast.dismiss(toastId);
                   toast.success("تم تصدير وتحميل ملف SQL Dump بنجاح");
-                } catch (err: any) {
+                }).catch((err: any) => {
                   toast.dismiss(toastId);
-                  toast.error(err?.message || "فشل تصدير النسخة الاحتياطية");
-                }
+                  toast.error(err.message || "فشل تصدير النسخة الاحتياطية");
+                });
               }}
             >
               <Download size={16} /> تصدير ملف SQL (SQL Dump)

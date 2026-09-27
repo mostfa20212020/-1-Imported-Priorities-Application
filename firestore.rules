@@ -9,5 +9,9 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+
+    match /document_annotations/{id} {
+      allow read, write: if true;
+    }
   }
 }

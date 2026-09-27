@@ -1,0 +1,15 @@
+[
+  {
+    "id": "test-note-1",
+    "type": "sticky_note",
+    "x": 25.5,
+    "y": 40.2,
+    "title": "ملاحظة تدقيق",
+    "content": "يرجى مراجعة التوقيع والمرفق",
+    "color": "#fef9c3",
+    "authorName": "فضيلة النائب العام",
+    "authorRole": "النائب العام للجمهورية",
+    "isResolved": false,
+    "createdAt": "2026-09-27T00:21:55.988Z"
+  }
+]

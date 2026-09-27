@@ -13,7 +13,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         classNames: {
           toast: "group toast group-[.toaster]:bg-white group-[.toaster]:text-slate-900 group-[.toaster]:border-slate-200 group-[.toaster]:shadow-lg dark:group-[.toaster]:bg-slate-950 dark:group-[.toaster]:text-slate-50",
           description: "group-[.toast]:text-slate-500 dark:group-[.toast]:text-slate-400",
-          actionButton: "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
+          actionButton: "group-[.toast]:bg-emerald-800 group-[.toast]:text-white group-[.toast]:hover:bg-emerald-900 group-[.toast]:px-3.5 group-[.toast]:py-1.5 group-[.toast]:rounded-md group-[.toast]:text-xs group-[.toast]:font-bold group-[.toast]:shadow-sm group-[.toast]:cursor-pointer",
           cancelButton: "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
           success: "group-[.toaster]:bg-emerald-50 group-[.toaster]:text-emerald-950 group-[.toaster]:border-emerald-200 dark:group-[.toaster]:bg-emerald-950/40 dark:group-[.toaster]:text-emerald-200",
           error: "group-[.toaster]:bg-rose-50 group-[.toaster]:text-rose-950 group-[.toaster]:border-rose-200 dark:group-[.toaster]:bg-rose-950/40 dark:group-[.toaster]:text-rose-200",

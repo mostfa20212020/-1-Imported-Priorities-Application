@@ -92,4 +92,38 @@ describe("incoming files workflow router", () => {
       })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  it("saves and retrieves PDF coordinate annotations and sticky notes", async () => {
+    const caller = appRouter.createCaller(createContext("director"));
+    const testAnnotation = {
+      id: "test-note-1",
+      type: "sticky_note",
+      x: 25.5,
+      y: 40.2,
+      title: "ملاحظة تدقيق",
+      content: "يرجى مراجعة التوقيع والمرفق",
+      color: "#fef9c3",
+      authorName: "فضيلة النائب العام",
+      authorRole: "النائب العام للجمهورية",
+      isResolved: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    const saveRes = await caller.files.saveAnnotations({
+      fileId: 1,
+      docType: "original",
+      annotations: [testAnnotation],
+    });
+    expect(saveRes.success).toBe(true);
+    expect(saveRes.count).toBe(1);
+
+    const loaded = await caller.files.getAnnotations({
+      fileId: 1,
+      docType: "original",
+    });
+    expect(Array.isArray(loaded)).toBe(true);
+    expect(loaded.length).toBeGreaterThanOrEqual(1);
+    expect(loaded[0].id).toBe("test-note-1");
+    expect(loaded[0].x).toBe(25.5);
+  });
 });

@@ -40,6 +40,8 @@ import {
   updateRoleDefinition,
   resetRoleDefinitions,
   RoleKey,
+  getFileAnnotations,
+  saveFileAnnotations,
 } from "./db";
 
 const statusValues = ["new", "awaiting_direction", "directed", "in_progress", "returned", "completed", "archived", "PENDING_AG", "PENDING_EMPLOYEE", "COMPLETED"] as const;
@@ -546,6 +548,22 @@ export const appRouter = router({
       }
 
       return updated;
+    }),
+    getAnnotations: protectedProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      docType: z.enum(["original", "signed"]).default("original"),
+    })).query(async ({ input }) => {
+      return await getFileAnnotations(input.fileId, input.docType);
+    }),
+    saveAnnotations: protectedProcedure.input(z.object({
+      fileId: z.number().int().positive(),
+      docType: z.enum(["original", "signed"]).default("original"),
+      annotations: z.array(z.any()),
+    })).mutation(async ({ input, ctx }) => {
+      const file = await getIncomingFile(input.fileId);
+      if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "الملف غير موجود" });
+      const saved = await saveFileAnnotations(input.fileId, input.docType, input.annotations);
+      return { success: true, count: saved.length };
     }),
     adminUpdate: directorProcedure.input(z.object({
       fileId: z.number().int().positive(),

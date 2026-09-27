@@ -11,12 +11,84 @@
         }
       },
       "required": ["status"]
+    },
+    "DocumentAnnotation": {
+      "title": "DocumentAnnotation",
+      "description": "PDF Document coordinate annotations and sticky notes",
+      "type": "object",
+      "properties": {
+        "fileId": {
+          "type": "number",
+          "description": "Associated incoming file ID"
+        },
+        "docType": {
+          "type": "string",
+          "description": "original or signed"
+        },
+        "type": {
+          "type": "string",
+          "description": "shape or sticky_note"
+        },
+        "x": {
+          "type": "number",
+          "description": "Horizontal percentage coordinate (0-100)"
+        },
+        "y": {
+          "type": "number",
+          "description": "Vertical percentage coordinate (0-100)"
+        },
+        "width": {
+          "type": "number",
+          "description": "Width percentage"
+        },
+        "height": {
+          "type": "number",
+          "description": "Height percentage"
+        },
+        "shapeType": {
+          "type": "string",
+          "description": "rectangle, circle, arrow, line, freehand"
+        },
+        "color": {
+          "type": "string",
+          "description": "Color hex code"
+        },
+        "strokeWidth": {
+          "type": "number",
+          "description": "Stroke width"
+        },
+        "content": {
+          "type": "string",
+          "description": "Sticky note text content"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Author name"
+        },
+        "authorRole": {
+          "type": "string",
+          "description": "Author judicial role"
+        },
+        "isResolved": {
+          "type": "boolean",
+          "description": "Whether note is resolved"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["fileId", "type", "x", "y"]
     }
   },
   "firestore": {
     "/_system_health/{id}": {
       "schema": "SystemHealth",
       "description": "System health status probe collection"
+    },
+    "/document_annotations/{id}": {
+      "schema": "DocumentAnnotation",
+      "description": "Annotations and sticky notes placed on PDF documents"
     }
   }
 }

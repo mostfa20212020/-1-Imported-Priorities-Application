@@ -1,6 +1,8 @@
 import { and, desc, eq, like, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { randomBytes, scryptSync } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { ENV } from "./_core/env";
 import {
   fileHistory,
@@ -1061,4 +1063,73 @@ export async function markNotificationRead(id: number) {
 
   const notif = inMemoryNotifications.find((n) => n.id === id);
   if (notif) notif.readAt = new Date();
+}
+
+// ---------------------------------------------------------------------------
+// Document Annotations & Sticky Notes Storage (Coordinate Layer)
+// ---------------------------------------------------------------------------
+
+export interface DocumentAnnotationRecord {
+  id: string;
+  fileId: number;
+  docType: "original" | "signed";
+  type: "shape" | "sticky_note";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  shapeType?: "rectangle" | "circle" | "arrow" | "line" | "freehand";
+  color?: string;
+  strokeWidth?: number;
+  opacity?: number;
+  points?: Array<{ x: number; y: number }>;
+  title?: string;
+  content?: string;
+  authorName?: string;
+  authorRole?: string;
+  isResolved?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+const inMemoryAnnotations = new Map<string, DocumentAnnotationRecord[]>();
+
+function getAnnotationsKey(fileId: number, docType: string = "original") {
+  return `${fileId}_${docType}`;
+}
+
+export async function getFileAnnotations(fileId: number, docType: string = "original"): Promise<DocumentAnnotationRecord[]> {
+  const key = getAnnotationsKey(fileId, docType);
+  if (inMemoryAnnotations.has(key)) {
+    return inMemoryAnnotations.get(key) || [];
+  }
+  // Try reading from .local_storage
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const storagePath = path.resolve(process.cwd(), ".local_storage", `annotations_${key}.json`);
+    const data = await fs.readFile(storagePath, "utf-8");
+    const parsed = JSON.parse(data);
+    inMemoryAnnotations.set(key, parsed);
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export async function saveFileAnnotations(fileId: number, docType: string = "original", annotations: DocumentAnnotationRecord[]): Promise<DocumentAnnotationRecord[]> {
+  const key = getAnnotationsKey(fileId, docType);
+  inMemoryAnnotations.set(key, annotations);
+  // Persist to .local_storage
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const dir = path.resolve(process.cwd(), ".local_storage");
+    await fs.mkdir(dir, { recursive: true });
+    const storagePath = path.join(dir, `annotations_${key}.json`);
+    await fs.writeFile(storagePath, JSON.stringify(annotations, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Storage] Could not persist annotations to disk:", err);
+  }
+  return annotations;
 }
