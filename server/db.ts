@@ -31,7 +31,7 @@ function hashPassword(password: string): string {
   return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`;
 }
 
-const defaultPasswordHash = hashPassword("12345678");
+const defaultPasswordHash = "c3b53c1ec252f58e6584288bcf33c6f2:7cbc81a044f526a2cc1c9f720dd7bb45570ed13f92faffc2ab91c19405882d3430f3cbb23ee402857e111fcfdabc522f73a6df9d40bbdb6ba14b7b8c523142d3";
 
 let inMemoryUserIdCounter = 4;
 const inMemoryUsers: User[] = [
@@ -390,7 +390,7 @@ export async function getUserByUsername(username: string) {
   try {
     const database = await getDb();
     if (database) {
-      const result = await database.select().from(users).where(eq(users.username, username)).limit(1);
+      const result = await database.select().from(users).where(ilike(users.username, norm)).limit(1);
       if (result[0]) return result[0];
     }
   } catch (err) {

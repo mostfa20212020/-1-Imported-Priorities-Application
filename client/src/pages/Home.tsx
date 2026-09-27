@@ -73,6 +73,9 @@ import { ManualSignatureModal } from "@/components/ManualSignatureModal";
 import { PdfAnnotationLayer } from "@/components/PdfAnnotationLayer";
 import { FirebaseStatusBadge } from "@/components/FirebaseStatusBadge";
 import { SystemResetModal } from "@/components/SystemResetModal";
+import { ServerConnectionModal } from "@/components/ServerConnectionModal";
+import { getServerUrl, isAndroidApk } from "@/lib/serverConfig";
+import { WorkflowProgressChart } from "@/components/WorkflowProgressChart";
 
 const statusLabels: Record<string, string> = {
   new: "جديد",
@@ -203,6 +206,7 @@ export default function Home() {
   const [sourceEntityFilter, setSourceEntityFilter] = useState("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "priority">("date_desc");
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const filters = useMemo(() => ({ search: search || undefined, status: statusFilter || undefined, importance: importanceFilter || undefined, fileType: fileTypeFilter || undefined, sourceEntity: sourceEntityFilter || undefined }), [search, statusFilter, importanceFilter, fileTypeFilter, sourceEntityFilter]);
   const filesQuery = trpc.files.list.useQuery(filters, { enabled: Boolean(user) });
   const statsQuery = trpc.files.stats.useQuery(undefined, { enabled: Boolean(user) });
@@ -569,12 +573,34 @@ export default function Home() {
                   <Trash2 size={13} />
                   <span>تصفير كافة المجموعات والسجلات</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setIsServerModalOpen(true)}
+                  style={{
+                    background: "#f0f9ff",
+                    border: "1px solid #bae6fd",
+                    color: "#0369a1",
+                    padding: "5px 12px",
+                    borderRadius: "20px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  title="إعدادات وفحص ربط السيرفر وقاعدة البيانات"
+                >
+                  <Server size={13} />
+                  <span>ربط الخادم وقاعدة البيانات</span>
+                </button>
                 <FirebaseStatusBadge />
               </div>
             </div>
           )}
 
           <SystemResetModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} onSuccess={() => selectView("register")} />
+          <ServerConnectionModal isOpen={isServerModalOpen} onClose={() => setIsServerModalOpen(false)} />
 
           {canViewDashboard && (
             <DirectorQuickFilters
@@ -726,6 +752,7 @@ function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [showServerModal, setShowServerModal] = useState(false);
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: ({ user, token }: any) => {
       setLoginError("");
@@ -751,7 +778,31 @@ function LoginScreen() {
     if (!password) { setLoginError("اكتب كلمة المرور في الحقل الثاني."); toast.error("كلمة المرور مطلوبة"); return; }
     loginMutation.mutate({ username, password });
   };
-  return <div className="login-screen" dir="rtl"><div className="login-decor decor-one" /><div className="login-decor decor-two" /><form className="login-card" onSubmit={submit}><div className="brand-mark login-mark"><ScaleMark /></div><div className="eyebrow">بوابة المستخدمين المعتمدين</div><h1>إدارة الأوليات</h1><p>سجّل الدخول للوصول إلى الواجهة المخصصة لصلاحياتك.</p><div className="login-divider"><span>النيابة العامة</span></div><label className="login-field"><span>اسم المستخدم</span><div className={`login-input ${loginError && !username ? "invalid" : ""}`}><UserRound size={16} /><input value={username} onChange={(event) => { setUsername(event.target.value); setLoginError(""); }} autoComplete="username" placeholder="اكتب اسم المستخدم" /></div></label><label className="login-field"><span>كلمة المرور</span><div className={`login-input ${loginError && !password ? "invalid" : ""}`}><ShieldCheck size={16} /><input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setLoginError(""); }} autoComplete="current-password" placeholder="اكتب كلمة المرور" /></div></label>{loginError && <div className="login-error" role="alert"><X size={16} /><span>{loginError}</span></div>}<button className="primary-button login-button" type="submit" disabled={loginMutation.isPending}>{loginMutation.isPending ? <><RefreshCw size={17} className="spin" /> جارٍ التحقق...</> : <><UserRound size={18} /> دخول آمن</>}</button><div style={{ marginTop: "12px", padding: "10px", background: "rgba(22, 59, 80, 0.05)", borderRadius: "8px", border: "1px dashed #b8c9c6", textAlign: "right" }}><div style={{ fontSize: "12px", color: "#365363", fontWeight: 600, marginBottom: "8px" }}>حسابات تجريبية سريعة (كلمة المرور: 12345678):</div><div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}><button type="button" className="outline-button small" onClick={() => { setUsername("director"); setPassword("12345678"); }}>رئيس النيابة (director)</button><button type="button" className="outline-button small" onClick={() => { setUsername("reception"); setPassword("12345678"); }}>موظف الاستقبال (reception)</button><button type="button" className="outline-button small" onClick={() => { setUsername("admin"); setPassword("12345678"); }}>مدير النظام (admin)</button></div></div><small>سيتم فتح واجهة الإدخال والاستقبال أو واجهة رئيس النيابة حسب الحساب.</small></form><div className="login-footer">الجمهورية اليمنية · النيابة العامة</div></div>;
+  return <div className="login-screen" dir="rtl"><div className="login-decor decor-one" /><div className="login-decor decor-two" /><form className="login-card" onSubmit={submit}><div className="brand-mark login-mark"><ScaleMark /></div><div className="eyebrow">بوابة المستخدمين المعتمدين</div><h1>إدارة الأوليات</h1><p>سجّل الدخول للوصول إلى الواجهة المخصصة لصلاحياتك.</p><div className="login-divider"><span>النيابة العامة</span></div><label className="login-field"><span>اسم المستخدم</span><div className={`login-input ${loginError && !username ? "invalid" : ""}`}><UserRound size={16} /><input value={username} onChange={(event) => { setUsername(event.target.value); setLoginError(""); }} autoComplete="username" placeholder="اكتب اسم المستخدم" /></div></label><label className="login-field"><span>كلمة المرور</span><div className={`login-input ${loginError && !password ? "invalid" : ""}`}><ShieldCheck size={16} /><input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setLoginError(""); }} autoComplete="current-password" placeholder="اكتب كلمة المرور" /></div></label>{loginError && <div className="login-error" role="alert"><X size={16} /><span>{loginError}</span></div>}<button className="primary-button login-button" type="submit" disabled={loginMutation.isPending}>{loginMutation.isPending ? <><RefreshCw size={17} className="spin" /> جارٍ التحقق...</> : <><UserRound size={18} /> دخول آمن</>}</button><div style={{ marginTop: "12px", padding: "10px", background: "rgba(22, 59, 80, 0.05)", borderRadius: "8px", border: "1px dashed #b8c9c6", textAlign: "right" }}><div style={{ fontSize: "12px", color: "#365363", fontWeight: 600, marginBottom: "8px" }}>حسابات تجريبية سريعة (كلمة المرور: 12345678):</div><div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}><button type="button" className="outline-button small" onClick={() => { setUsername("director"); setPassword("12345678"); }}>رئيس النيابة (director)</button><button type="button" className="outline-button small" onClick={() => { setUsername("reception"); setPassword("12345678"); }}>موظف الاستقبال (reception)</button><button type="button" className="outline-button small" onClick={() => { setUsername("admin"); setPassword("12345678"); }}>مدير النظام (admin)</button></div></div>    <small>سيتم فتح واجهة الإدخال والاستقبال أو واجهة رئيس النيابة حسب الحساب.</small>
+    <div style={{ marginTop: "10px", textAlign: "center" }}>
+      <button
+        type="button"
+        onClick={() => setShowServerModal(true)}
+        style={{
+          background: "none",
+          border: "none",
+          color: "#0f3d64",
+          fontSize: "12px",
+          fontWeight: 600,
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "5px",
+          textDecoration: "underline",
+        }}
+      >
+        <Server size={14} />
+        <span>إعدادات وفحص ربط السيرفر وقاعدة البيانات (APK)</span>
+      </button>
+    </div>
+  </form>
+  <ServerConnectionModal isOpen={showServerModal} onClose={() => setShowServerModal(false)} />
+  <div className="login-footer">الجمهورية اليمنية · النيابة العامة</div></div>;
 }
 
 interface PriorityModalConfig {
@@ -2037,7 +2088,8 @@ function PdfViewerModal({ file: initialFile, initialType = "original", onClose }
     : "";
 
   const pdfUrl = useMemo(() => {
-    const base = docType === "signed" ? `/api/files/${currentFile.id}/signed-pdf` : `/api/files/${currentFile.id}/pdf`;
+    const srv = getServerUrl();
+    const base = docType === "signed" ? `${srv}/api/files/${currentFile.id}/signed-pdf` : `${srv}/api/files/${currentFile.id}/pdf`;
     const full = token ? `${base}?token=${encodeURIComponent(token)}` : base;
     return `${full}${full.includes("?") ? "&" : "?"}v=${refreshKey}`;
   }, [currentFile.id, docType, token, refreshKey]);
@@ -2852,8 +2904,8 @@ function FileDetailsModal({
               </div>
             )}
 
-            {/* مسار سير عمل المعاملة كـ Timeline مرئي يوضح الحالات الأربعة */}
-            <TransactionWorkflowTimeline file={file} />
+            {/* مؤشر تقدم مسار المعاملة الإجرائي ومخطط دورة الحياة المرئي باستخدام D3 */}
+            <WorkflowProgressChart file={file} history={history} />
 
             <div className="detail-meta-grid">
               <Meta label="جهة الورود" value={file.sourceEntity} />
@@ -2902,7 +2954,7 @@ function FileDetailsModal({
                   <PenTool size={14} /> توقيع يدوي على PDF
                 </button>
                 <a
-                  href={`/api/files/${file.id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ""}`}
+                  href={`${getServerUrl()}/api/files/${file.id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ""}`}
                   download={file.originalFileName || `وارد_${file.fileNumber.replace(/[\/\\]/g, "_")}.pdf`}
                   className="outline-button small"
                   title="تحميل نسخة PDF"

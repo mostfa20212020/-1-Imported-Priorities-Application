@@ -206,8 +206,15 @@ export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user ? publicUser(opts.ctx.user) : null),
     login: publicProcedure.input(z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(128) })).mutation(async ({ input, ctx }) => {
+      const arabicIndic = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+      let normalizedPass = input.password;
+      for (let i = 0; i < 10; i++) {
+        normalizedPass = normalizedPass.replaceAll(arabicIndic[i], String(i));
+      }
+
       const account = await getUserByUsername(input.username.trim().toLowerCase());
-      if (!account || !verifyPassword(input.password, account.passwordHash)) {
+      const isValid = account && (verifyPassword(input.password, account.passwordHash) || verifyPassword(normalizedPass, account.passwordHash));
+      if (!account || !isValid) {
         throw new TRPCError({ code: "UNAUTHORIZED", message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
       }
       const token = await createLocalSession(account, ctx.res, ctx.req);

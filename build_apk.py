@@ -63,11 +63,10 @@ def main():
     for d in [values_dir, mipmap_dir, src_dir, gen_dir, obj_dir, bin_dir, assets_dir]:
         os.makedirs(d, exist_ok=True)
         
-    # 2. Copy web build output into assets
+    # 2. Re-build frontend to include latest code and server configuration
+    print("Building latest web application for APK...")
+    run_cmd("npm run build", cwd=root_dir)
     dist_public = os.path.join(root_dir, "dist", "public")
-    if not os.path.exists(dist_public):
-        print("dist/public not found, running build...")
-        run_cmd("npm run build", cwd=root_dir)
         
     print("Copying web assets to APK assets...")
     shutil.copytree(dist_public, assets_dir, dirs_exist_ok=True)
@@ -139,6 +138,7 @@ def main():
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
         <activity
             android:name=".MainActivity"
@@ -169,6 +169,8 @@ import android.webkit.WebViewClient;
 import android.content.Intent;
 import android.net.Uri;
 import android.webkit.ValueCallback;
+import android.webkit.CookieManager;
+import android.os.Build;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -183,6 +185,9 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         setContentView(webView);
 
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -196,6 +201,11 @@ public class MainActivity extends Activity {
         settings.setSupportZoom(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
+
+        if (Build.VERSION.SDK_INT >= 21) {
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
 
         webView.setWebViewClient(new WebViewClient() {
             @Override

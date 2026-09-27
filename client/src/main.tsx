@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
+import { getServerUrl } from "./lib/serverConfig";
 import App from "./App";
 import { startLogin } from "./const";
 import "./index.css";
@@ -89,7 +90,7 @@ queryClient.getMutationCache().subscribe(event => {
 const trpcClient = trpc.createClient({
   links: [
     httpLink({
-      url: "/api/trpc",
+      url: `${getServerUrl()}/api/trpc`,
       transformer: superjson,
       headers() {
         try {
