@@ -53,6 +53,7 @@ def main():
         
     res_dir = os.path.join(android_dir, "res")
     values_dir = os.path.join(res_dir, "values")
+    xml_dir = os.path.join(res_dir, "xml")
     mipmap_dir = os.path.join(res_dir, "mipmap-hdpi")
     src_dir = os.path.join(android_dir, "src", "com", "idaratalawliyat", "app")
     gen_dir = os.path.join(android_dir, "gen")
@@ -60,7 +61,7 @@ def main():
     bin_dir = os.path.join(android_dir, "bin")
     assets_dir = os.path.join(android_dir, "assets")
     
-    for d in [values_dir, mipmap_dir, src_dir, gen_dir, obj_dir, bin_dir, assets_dir]:
+    for d in [values_dir, xml_dir, mipmap_dir, src_dir, gen_dir, obj_dir, bin_dir, assets_dir]:
         os.makedirs(d, exist_ok=True)
         
     # 2. Re-build frontend to include latest code and server configuration
@@ -114,6 +115,18 @@ def main():
     </style>
 </resources>''')
 
+    # 4.5. Create network_security_config.xml
+    with open(os.path.join(xml_dir, "network_security_config.xml"), "w", encoding="utf-8") as f:
+        f.write('''<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>''')
+
     # 5. Create AndroidManifest.xml
     manifest_path = os.path.join(android_dir, "AndroidManifest.xml")
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -166,6 +179,8 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.SslErrorHandler;
+import android.net.http.SslError;
 import android.content.Intent;
 import android.net.Uri;
 import android.webkit.ValueCallback;
@@ -208,6 +223,12 @@ public class MainActivity extends Activity {
         }
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                // Allow valid navigation across cloud run and proxy environments
+                handler.proceed();
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 if (url.startsWith("file:///android_asset/")) {

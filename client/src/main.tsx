@@ -4,10 +4,38 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
+import { registerSW } from "virtual:pwa-register";
 import { getServerUrl } from "./lib/serverConfig";
 import App from "./App";
 import { startLogin } from "./const";
 import "./index.css";
+
+// Register Service Worker with auto-update and background synchronization
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  try {
+    const updateSW = registerSW({
+      immediate: true,
+      onNeedRefresh() {
+        console.log("[PWA] New version ready, refreshing cache...");
+        updateSW(true);
+      },
+      onOfflineReady() {
+        console.log("[PWA] Service worker cached offline shell and core data");
+      },
+      onRegistered(registration) {
+        console.log("[PWA] Service worker registered successfully:", registration?.scope);
+        if (registration && "sync" in registration) {
+          (registration as any).sync.register("sync-core-data").catch(() => {});
+        }
+      },
+      onRegisterError(error) {
+        console.warn("[PWA] Service worker registration error:", error);
+      },
+    });
+  } catch (err) {
+    console.warn("[PWA] Could not initialize service worker:", err);
+  }
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -1,6 +1,7 @@
 import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
@@ -150,7 +151,117 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+const plugins = [
+  react(),
+  tailwindcss(),
+  jsxLocPlugin(),
+  vitePluginManusRuntime(),
+  vitePluginManusDebugCollector(),
+  VitePWA({
+    registerType: "autoUpdate",
+    includeAssets: ["favicon.ico", "apple-touch-icon.png", "icon.svg", "sw-sync.js"],
+    manifest: {
+      id: "/",
+      name: "إدارة الأوليات - النيابة العامة",
+      short_name: "إدارةالأوليات",
+      description: "نظام متكامل لإدارة الأوليات والمكاتبات وتتبع سير العمل والتوقيع الإلكتروني للنيابة العامة",
+      theme_color: "#163b50",
+      background_color: "#163b50",
+      display: "standalone",
+      start_url: "/",
+      scope: "/",
+      icons: [
+        {
+          src: "/pwa-192x192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "/pwa-512x512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "/pwa-maskable-512x512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
+        },
+      ],
+    },
+    workbox: {
+      maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6MB for bundle precaching
+      globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
+      importScripts: ["/sw-sync.js"],
+      runtimeCaching: [
+        {
+          urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "google-fonts-stylesheets",
+            expiration: {
+              maxEntries: 10,
+              maxAgeSeconds: 60 * 60 * 24 * 365,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        {
+          urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "google-fonts-webfonts",
+            expiration: {
+              maxEntries: 30,
+              maxAgeSeconds: 60 * 60 * 24 * 365,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        {
+          urlPattern: /\/api\/trpc\/.*/i,
+          handler: "NetworkFirst",
+          options: {
+            cacheName: "api-core-data-cache",
+            networkTimeoutSeconds: 3,
+            expiration: {
+              maxEntries: 200,
+              maxAgeSeconds: 60 * 60 * 24, // 24 hours
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+        {
+          urlPattern: /\/api\/.*/i,
+          handler: "NetworkFirst",
+          options: {
+            cacheName: "api-endpoints-cache",
+            networkTimeoutSeconds: 4,
+            expiration: {
+              maxEntries: 100,
+              maxAgeSeconds: 60 * 60 * 24,
+            },
+            cacheableResponse: {
+              statuses: [0, 200],
+            },
+          },
+        },
+      ],
+    },
+    devOptions: {
+      enabled: true,
+      type: "classic",
+    },
+  }),
+];
 
 export default defineConfig({
   plugins,

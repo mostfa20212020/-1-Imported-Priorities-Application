@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#163b50" />
+      <stop offset="100%" stop-color="#0c2331" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f6d365" />
+      <stop offset="50%" stop-color="#fda085" />
+      <stop offset="100%" stop-color="#d4af37" />
+    </linearGradient>
+    <linearGradient id="goldPure" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe28a" />
+      <stop offset="50%" stop-color="#d4af37" />
+      <stop offset="100%" stop-color="#aa8010" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- Base rounded canvas -->
+  <rect width="512" height="512" rx="104" fill="url(#bgGrad)" />
+
+  <!-- Outer gold decorative ring -->
+  <circle cx="256" cy="256" r="216" fill="none" stroke="url(#goldPure)" stroke-width="6" opacity="0.85" />
+  <circle cx="256" cy="256" r="204" fill="none" stroke="url(#goldPure)" stroke-width="2" stroke-dasharray="8 6" opacity="0.6" />
+
+  <!-- Inner crest container -->
+  <g filter="url(#shadow)">
+    <!-- Central Shield / Base -->
+    <path d="M256 90 L370 140 V270 C370 350 256 410 256 410 C256 410 142 350 142 270 V140 Z" fill="#112e3e" stroke="url(#goldPure)" stroke-width="5" />
+    
+    <!-- Scales of Justice -->
+    <!-- Center Pillar -->
+    <rect x="251" y="160" width="10" height="170" rx="4" fill="url(#goldPure)" />
+    <!-- Pillar Base -->
+    <path d="M226 330 L286 330 L296 345 L216 345 Z" fill="url(#goldPure)" />
+    <!-- Top Finial / Ring -->
+    <circle cx="256" cy="155" r="14" fill="url(#goldPure)" />
+    <circle cx="256" cy="155" r="6" fill="#112e3e" />
+    <!-- Balance Beam -->
+    <path d="M180 185 Q256 175 332 185" fill="none" stroke="url(#goldPure)" stroke-width="7" stroke-linecap="round" />
+    
+    <!-- Left Scale Pan -->
+    <line x1="180" y1="185" x2="165" y2="235" stroke="url(#goldPure)" stroke-width="3" />
+    <line x1="180" y1="185" x2="195" y2="235" stroke="url(#goldPure)" stroke-width="3" />
+    <path d="M150 235 Q180 260 210 235 Z" fill="url(#goldPure)" />
+
+    <!-- Right Scale Pan -->
+    <line x1="332" y1="185" x2="317" y2="235" stroke="url(#goldPure)" stroke-width="3" />
+    <line x1="332" y1="185" x2="347" y2="235" stroke="url(#goldPure)" stroke-width="3" />
+    <path d="M302 235 Q332 260 362 235 Z" fill="url(#goldPure)" />
+
+    <!-- Document / Case File Overlay Emblem -->
+    <rect x="236" y="240" width="40" height="52" rx="4" fill="#ffffff" opacity="0.95" />
+    <line x1="244" y1="252" x2="268" y2="252" stroke="#163b50" stroke-width="3" stroke-linecap="round" />
+    <line x1="244" y1="262" x2="268" y2="262" stroke="#163b50" stroke-width="3" stroke-linecap="round" />
+    <line x1="244" y1="272" x2="260" y2="272" stroke="#d4af37" stroke-width="3" stroke-linecap="round" />
+  </g>
+</svg>

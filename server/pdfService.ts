@@ -331,11 +331,12 @@ export async function generateProsecutionPdf(
 export async function ensureDefaultPdfs(files: IncomingFile[]): Promise<void> {
   for (const file of files) {
     try {
+      const safeFileNumber = String(file.fileNumber || file.id).replace(/[/\\]/g, "_");
       // 1. Ensure original PDF
       if (!file.originalFileUrl || !file.originalFileKey) {
         const pdfBytes = await generateProsecutionPdf(file, "original");
         const stored = await storagePut(
-          `incoming/original/${file.year}/${file.fileNumber}.pdf`,
+          `incoming/original/${file.year}/${safeFileNumber}.pdf`,
           pdfBytes,
           "application/pdf"
         );
@@ -351,7 +352,7 @@ export async function ensureDefaultPdfs(files: IncomingFile[]): Promise<void> {
       if (file.isSigned && (!file.signedFileUrl || !file.signedFileKey)) {
         const signedBytes = await generateProsecutionPdf(file, "signed");
         const storedSigned = await storagePut(
-          `incoming/signed/${file.year}/${file.fileNumber}.pdf`,
+          `incoming/signed/${file.year}/${safeFileNumber}.pdf`,
           signedBytes,
           "application/pdf"
         );

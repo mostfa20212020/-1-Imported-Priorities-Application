@@ -17,10 +17,25 @@ export const createPool = () => {
       database: process.env.SQL_DB_NAME,
       max: 10,
       connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 20000, // Release idle connections after 20s to prevent stale server terminations
     });
 
     // Prevent unhandled pool-level errors from crashing the application
-    global._postgresPool.on('error', (err) => {
+    global._postgresPool.on('error', (err: any) => {
+      // Normal PostgreSQL server-side idle client disconnects (Cloud SQL scale-down, maintenance, timeouts).
+      // The pool automatically purges closed clients and reconnects on demand.
+      const isKnownServerDisconnect =
+        err?.code === '57P01' || // admin_shutdown
+        err?.code === 'ECONNRESET' ||
+        err?.code === 'EPIPE' ||
+        err?.message?.includes('terminating connection due to administrator command') ||
+        err?.message?.includes('Connection terminated') ||
+        err?.message?.includes('connection closed');
+
+      if (isKnownServerDisconnect) {
+        // Handled gracefully by pool client lifecycle
+        return;
+      }
       console.error('Unexpected error on idle SQL pool client:', err);
     });
   }

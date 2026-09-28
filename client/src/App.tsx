@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { OfflineSyncBanner } from "./components/OfflineSyncBanner";
 import Home from "./pages/Home";
 
 function Router() {
@@ -22,6 +23,7 @@ export default function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster position="top-center" richColors dir="rtl" />
+          <OfflineSyncBanner />
           <Router />
         </TooltipProvider>
       </ThemeProvider>

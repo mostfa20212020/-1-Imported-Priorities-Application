@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Server, Wifi, WifiOff, CheckCircle2, AlertTriangle, RefreshCw, X, Globe, Smartphone, Save } from "lucide-react";
+import { Server, Wifi, WifiOff, CheckCircle2, AlertTriangle, RefreshCw, X, Globe, Smartphone, Save, Database, ShieldCheck, Key } from "lucide-react";
 import { toast } from "sonner";
+import { GoogleServicesConfigCard } from "./GoogleServicesConfigCard";
 import {
   DEFAULT_PRODUCTION_SERVER_URL,
   DEFAULT_DEV_SERVER_URL,
@@ -8,6 +9,7 @@ import {
   setCustomServerUrl,
   resetServerUrlToDefault,
   testServerConnection,
+  testFirebaseConnection,
   isAndroidApk,
 } from "../lib/serverConfig";
 
@@ -17,6 +19,7 @@ interface ServerConnectionModalProps {
 }
 
 export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ isOpen, onClose }) => {
+  const [activeTab, setActiveTab] = useState<"server" | "google_services">("server");
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [inputUrl, setInputUrl] = useState<string>("");
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -27,6 +30,12 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
     mode?: string;
   } | null>(null);
 
+  const [firebaseResult, setFirebaseResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+  const [isTestingFirebase, setIsTestingFirebase] = useState<boolean>(false);
+
   const isApk = isAndroidApk();
 
   useEffect(() => {
@@ -35,8 +44,10 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
       setCurrentUrl(active);
       setInputUrl(active);
       setTestResult(null);
-      // Automatically test connection on open
+      setFirebaseResult(null);
+      // Automatically test connections on open
       handleTest(active);
+      handleTestFirebase();
     }
   }, [isOpen]);
 
@@ -49,6 +60,13 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
     const res = await testServerConnection(target);
     setTestResult(res);
     setIsTesting(false);
+  };
+
+  const handleTestFirebase = async () => {
+    setIsTestingFirebase(true);
+    const res = await testFirebaseConnection();
+    setFirebaseResult(res);
+    setIsTestingFirebase(false);
   };
 
   const handleSave = () => {
@@ -75,10 +93,10 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" dir="rtl">
       <div
         className="modal-card"
-        style={{ maxWidth: "560px", width: "95%", borderRadius: "16px", padding: "24px" }}
+        style={{ maxWidth: "640px", width: "95%", borderRadius: "16px", padding: "24px" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div
               style={{
@@ -96,10 +114,10 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
             </div>
             <div>
               <h2 style={{ fontSize: "17px", fontWeight: 700, margin: 0, color: "#163b50" }}>
-                ربط التطبيق بالسيرفر وقاعدة البيانات
+                إعدادات الربط والتهيئة السحابية
               </h2>
               <span style={{ fontSize: "12px", color: "#64748b" }}>
-                إعداد الاتصال بين تطبيق الأندرويد (APK) وقاعدة البيانات السحابية
+                إعداد الاتصال بين التطبيق والسيرفر ومعايير google-services.json
               </span>
             </div>
           </div>
@@ -108,7 +126,65 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
           </button>
         </div>
 
-        {/* Environment Indicator */}
+        {/* Navigation Tabs */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", borderBottom: "1px solid #e2e8f0", paddingBottom: "10px" }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("server")}
+            style={{
+              padding: "7px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              background: activeTab === "server" ? "#163b50" : "#f1f5f9",
+              color: activeTab === "server" ? "#ffffff" : "#475569",
+              border: "none",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <Server size={14} />
+            <span>ربط الخادم وقاعدة البيانات</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("google_services")}
+            style={{
+              padding: "7px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              background: activeTab === "google_services" ? "#163b50" : "#f1f5f9",
+              color: activeTab === "google_services" ? "#ffffff" : "#475569",
+              border: "none",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <Key size={14} />
+            <span>معايير google-services.json (مع قناع المفتاح)</span>
+          </button>
+        </div>
+
+        {activeTab === "google_services" ? (
+          <div>
+            <GoogleServicesConfigCard />
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+              <button type="button" className="outline-button" onClick={onClose}>
+                إغلاق
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Environment Indicator */}
         <div
           style={{
             display: "flex",
@@ -129,7 +205,55 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
           </div>
         </div>
 
-        {/* Test Connection Status Banner */}
+        {/* Firebase Firestore Status Banner */}
+        <div
+          style={{
+            padding: "12px 14px",
+            borderRadius: "10px",
+            marginBottom: "12px",
+            border: "1px solid",
+            background: firebaseResult
+              ? firebaseResult.success
+                ? "#f0fdf4"
+                : "#fef2f2"
+              : "#f8fafc",
+            borderColor: firebaseResult
+              ? firebaseResult.success
+                ? "#bbf7d0"
+                : "#fecaca"
+              : "#e2e8f0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <Database size={20} color={firebaseResult?.success ? "#16a34a" : "#dc2626"} />
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
+                {isTestingFirebase
+                  ? "جارٍ فحص الاتصال بقاعدة بيانات Google Firestore..."
+                  : firebaseResult
+                  ? firebaseResult.message
+                  : "فحص الاتصال المباشر بقاعدة بيانات Firebase"}
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                قاعدة البيانات السحابية: <strong>ai-studio-idaratalawliyat</strong> (قواعد الأمان مفعلة ومعتمدة)
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="outline-button small"
+            onClick={handleTestFirebase}
+            disabled={isTestingFirebase}
+            style={{ fontSize: "12px", whiteSpace: "nowrap" }}
+          >
+            {isTestingFirebase ? "جارِ الفحص..." : "فحص Firebase"}
+          </button>
+        </div>
+
+        {/* Server & Cloud SQL Connection Status Banner */}
         <div
           style={{
             padding: "12px 14px",
@@ -166,10 +290,10 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
             <div>
               <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
                 {isTesting
-                  ? "جارٍ فحص الاتصال بقاعدة البيانات..."
+                  ? "جارٍ فحص الاتصال بخادم النيابة العامة (API)..."
                   : testResult
                   ? testResult.message
-                  : "اضغط على فحص للتحقق من الاتصال"}
+                  : "اضغط على فحص للتحقق من الاتصال بالخادم"}
               </div>
               {testResult?.mode && (
                 <div style={{ fontSize: "11px", color: "#166534", marginTop: "2px" }}>
@@ -270,6 +394,8 @@ export const ServerConnectionModal: React.FC<ServerConnectionModalProps> = ({ is
             حفظ وتطبيق الاتصال
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

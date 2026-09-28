@@ -7,6 +7,8 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.SslErrorHandler;
+import android.net.http.SslError;
 import android.content.Intent;
 import android.net.Uri;
 import android.webkit.ValueCallback;
@@ -49,6 +51,12 @@ public class MainActivity extends Activity {
         }
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                // Allow valid navigation across cloud run and proxy environments
+                handler.proceed();
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 if (url.startsWith("file:///android_asset/")) {

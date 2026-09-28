@@ -59,6 +59,35 @@ export function resetServerUrlToDefault(): void {
   }
 }
 
+import { db } from "./firebase";
+import { collection, getDocs, limit, query } from "firebase/firestore";
+
+export async function testFirebaseConnection(): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  try {
+    const q = query(collection(db, "_system_health"), limit(1));
+    await getDocs(q);
+    return {
+      success: true,
+      message: "تم الاتصال بقاعدة بيانات Firebase Firestore بنجاح وبصلاحيات كاملة!",
+    };
+  } catch (err: any) {
+    const msg = err?.message || "";
+    if (msg.includes("permission-denied")) {
+      return {
+        success: false,
+        message: "قواعد الأمان (Firestore Rules) ترفض الوصول. يرجى مراجعة rules في Firebase Console.",
+      };
+    }
+    return {
+      success: false,
+      message: msg || "تعذر الاتصال بـ Firebase Firestore",
+    };
+  }
+}
+
 export async function testServerConnection(urlToCheck?: string): Promise<{
   success: boolean;
   message: string;

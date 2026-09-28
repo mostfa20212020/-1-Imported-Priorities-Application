@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import fs from "fs";
+import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
@@ -55,6 +57,42 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+
+  // Direct APK download route for mobile installation
+  const handleApkDownload = (_req: express.Request, res: express.Response) => {
+    const candidates = [
+      path.resolve(process.cwd(), "APK_DOWNLOAD", "app-debug.apk"),
+      path.resolve(process.cwd(), ".build-outputs", "app-debug.apk"),
+      path.resolve(process.cwd(), "client", "public", "app-debug.apk"),
+      path.resolve(process.cwd(), "dist", "public", "app-debug.apk"),
+    ];
+
+    let apkPath: string | null = null;
+    for (const p of candidates) {
+      if (fs.existsSync(p) && fs.statSync(p).size > 1024 * 1024) {
+        apkPath = p;
+        break;
+      }
+    }
+
+    if (!apkPath) {
+      res.status(404).send("APK file not found or not built yet.");
+      return;
+    }
+
+    const stat = fs.statSync(apkPath);
+    res.setHeader("Content-Type", "application/vnd.android.package-archive");
+    res.setHeader("Content-Disposition", 'attachment; filename="idarat-alawliyat.apk"');
+    res.setHeader("Content-Length", stat.size);
+    res.setHeader("Cache-Control", "no-cache");
+    const stream = fs.createReadStream(apkPath);
+    stream.pipe(res);
+  };
+
+  app.get("/api/download-apk", handleApkDownload);
+  app.get("/download-apk", handleApkDownload);
+  app.get("/app-debug.apk", handleApkDownload);
+  app.get("/APK_DOWNLOAD/app-debug.apk", handleApkDownload);
   // Direct PDF viewing and downloading endpoints for all incoming files
   app.get("/api/files/:id/pdf", async (req, res) => {
     try {
@@ -229,6 +267,34 @@ async function startServer() {
       },
     });
   });
+
+  // Explicit PWA and service worker routes: ensure these static assets are NEVER intercepted
+  // by Vite/Express SPA HTML fallback, which would return HTML and cause "Uncaught SyntaxError: Unexpected token '<'"
+  app.get(["/sw.js", "/workbox-*.js", "/sw-sync.js", "/manifest.webmanifest"], (req, res, next) => {
+    const fileName = path.basename(req.path);
+    const candidatePaths = [
+      path.resolve(process.cwd(), "client", "public", fileName),
+      path.resolve(process.cwd(), "dist", "public", fileName),
+    ];
+    for (const filePath of candidatePaths) {
+      if (fs.existsSync(filePath)) {
+        if (fileName.endsWith(".js")) {
+          res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+        } else if (fileName.endsWith(".webmanifest") || fileName.endsWith(".json")) {
+          res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
+        }
+        res.setHeader("Cache-Control", "no-cache");
+        return res.sendFile(filePath);
+      }
+    }
+    // If not found on disk, do NOT return index.html for service workers! Return valid no-op JS
+    if (fileName.endsWith(".js")) {
+      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      return res.send("// Service Worker fallback\nself.addEventListener('install', () => self.skipWaiting());\nself.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));\n");
+    }
+    next();
+  });
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
