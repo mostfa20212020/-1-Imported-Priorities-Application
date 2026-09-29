@@ -257,8 +257,7 @@ const plugins = [
       ],
     },
     devOptions: {
-      enabled: true,
-      type: "classic",
+      enabled: false,
     },
   }),
 ];

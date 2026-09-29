@@ -10,15 +10,30 @@ declare global {
 // Function to create or retrieve the connection pool.
 export const createPool = () => {
   if (!global._postgresPool) {
-    global._postgresPool = new Pool({
-      host: process.env.SQL_HOST,
-      user: process.env.SQL_USER,
-      password: process.env.SQL_PASSWORD,
-      database: process.env.SQL_DB_NAME,
-      max: 10,
-      connectionTimeoutMillis: 15000,
-      idleTimeoutMillis: 20000, // Release idle connections after 20s to prevent stale server terminations
-    });
+    const rawDbUrl = process.env.DATABASE_URL?.trim();
+    const hasValidDatabaseUrl =
+      Boolean(rawDbUrl) &&
+      (rawDbUrl!.startsWith('postgres://') || rawDbUrl!.startsWith('postgresql://'));
+
+    const poolConfig = hasValidDatabaseUrl
+      ? {
+          connectionString: rawDbUrl,
+          max: 10,
+          connectionTimeoutMillis: 15000,
+          idleTimeoutMillis: 20000,
+        }
+      : {
+          host: process.env.SQL_HOST || 'localhost',
+          port: process.env.SQL_PORT ? Number(process.env.SQL_PORT) : 5432,
+          user: process.env.SQL_USER,
+          password: process.env.SQL_PASSWORD,
+          database: process.env.SQL_DB_NAME,
+          max: 10,
+          connectionTimeoutMillis: 15000,
+          idleTimeoutMillis: 20000, // Release idle connections after 20s to prevent stale server terminations
+        };
+
+    global._postgresPool = new Pool(poolConfig);
 
     // Prevent unhandled pool-level errors from crashing the application
     global._postgresPool.on('error', (err: any) => {
@@ -43,7 +58,7 @@ export const createPool = () => {
 };
 
 // Create or retrieve the pool instance.
-const pool = createPool();
+export const pool = createPool();
 
 // Initialize Drizzle with the pool and schema.
 export const db = drizzle(pool, { schema });

@@ -24,6 +24,13 @@ export async function setupVite(app: Express, server: Server) {
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
+    // Do not serve HTML for static assets (prevents "Unexpected token <" in browser when asset is missing)
+    const pathname = url.split("?")[0];
+    const ext = path.extname(pathname);
+    if (ext && ext !== ".html") {
+      return res.status(404).end("Not found");
+    }
+
     try {
       const clientTemplate = path.resolve(
         import.meta.dirname,

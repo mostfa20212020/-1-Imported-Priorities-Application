@@ -12,28 +12,37 @@ import "./index.css";
 
 // Register Service Worker with auto-update and background synchronization
 if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-  try {
-    const updateSW = registerSW({
-      immediate: true,
-      onNeedRefresh() {
-        console.log("[PWA] New version ready, refreshing cache...");
-        updateSW(true);
-      },
-      onOfflineReady() {
-        console.log("[PWA] Service worker cached offline shell and core data");
-      },
-      onRegistered(registration) {
-        console.log("[PWA] Service worker registered successfully:", registration?.scope);
-        if (registration && "sync" in registration) {
-          (registration as any).sync.register("sync-core-data").catch(() => {});
-        }
-      },
-      onRegisterError(error) {
-        console.warn("[PWA] Service worker registration error:", error);
-      },
-    });
-  } catch (err) {
-    console.warn("[PWA] Could not initialize service worker:", err);
+  if (import.meta.env.PROD) {
+    try {
+      const updateSW = registerSW({
+        immediate: true,
+        onNeedRefresh() {
+          console.log("[PWA] New version ready, refreshing cache...");
+          updateSW(true);
+        },
+        onOfflineReady() {
+          console.log("[PWA] Service worker cached offline shell and core data");
+        },
+        onRegistered(registration) {
+          console.log("[PWA] Service worker registered successfully:", registration?.scope);
+          if (registration && "sync" in registration) {
+            (registration as any).sync.register("sync-core-data").catch(() => {});
+          }
+        },
+        onRegisterError(error) {
+          console.warn("[PWA] Service worker registration error:", error);
+        },
+      });
+    } catch (err) {
+      console.warn("[PWA] Could not initialize service worker:", err);
+    }
+  } else {
+    // In development mode, clean up any old service workers from previous builds to prevent caching errors
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const registration of registrations) {
+        registration.unregister().catch(() => {});
+      }
+    }).catch(() => {});
   }
 }
 

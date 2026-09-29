@@ -1,7 +1,8 @@
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { randomBytes, scryptSync } from "node:crypto";
+import { QueryResult, QueryResultRow } from "pg";
 import { ENV } from "./_core/env";
-import { db } from "../src/db/index.ts";
+import { db, pool } from "../src/db/index.ts";
 import {
   fileHistory,
   FileHistory,
@@ -14,6 +15,35 @@ import {
   User,
   users,
 } from "../src/db/schema.ts";
+
+// Re-export initialized Drizzle ORM and pg.Pool instance
+export { db, pool };
+
+/**
+ * Direct query handler using 'pg' pool for raw SQL execution
+ * Initializes and executes parameterized SQL queries directly on PostgreSQL
+ * using credentials from .env (SQL_HOST, SQL_PORT, SQL_USER, SQL_PASSWORD, SQL_DB_NAME, DATABASE_URL)
+ *
+ * @param text The SQL query string (e.g. 'SELECT * FROM users WHERE id = $1')
+ * @param params Optional parameterized values to prevent SQL injection
+ */
+export async function query<R extends QueryResultRow = any>(
+  text: string,
+  params?: any[]
+): Promise<QueryResult<R>> {
+  const start = Date.now();
+  try {
+    const res = await pool.query<R>(text, params);
+    const duration = Date.now() - start;
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[PostgreSQL] Query executed in ${duration}ms | rows: ${res.rowCount}`);
+    }
+    return res;
+  } catch (err: any) {
+    console.error(`[PostgreSQL Query Error]: "${text}"`, err);
+    throw err;
+  }
+}
 
 export async function getDb() {
   if (process.env.SQL_HOST || process.env.SQL_USER || process.env.DATABASE_URL) {
