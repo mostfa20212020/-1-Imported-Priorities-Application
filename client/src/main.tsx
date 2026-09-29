@@ -7,6 +7,7 @@ import superjson from "superjson";
 import { registerSW } from "virtual:pwa-register";
 import { getServerUrl } from "./lib/serverConfig";
 import App from "./App";
+import ConnectionErrorAlert from "./components/ConnectionErrorAlert";
 import { startLogin } from "./const";
 import "./index.css";
 
@@ -86,21 +87,72 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
   } catch {}
 };
 
+/**
+ * Robust error categorization: differentiates between Network issues and Database connection errors
+ * and dispatches UI notifications instead of generic raw console logs.
+ */
+function handleCategorizedError(error: unknown) {
+  redirectToLoginIfUnauthorized(error);
+  const msg = (error as any)?.message || String(error || "");
+  const lower = msg.toLowerCase();
+
+  // 1. Specific Database connection failure detection
+  const isDbError =
+    lower.includes("database") ||
+    lower.includes("postgres") ||
+    lower.includes("econnrefused") ||
+    lower.includes("connection terminated") ||
+    lower.includes("password authentication failed") ||
+    lower.includes("supabase") ||
+    lower.includes("query error") ||
+    lower.includes("pool error") ||
+    msg.includes("قاعدة البيانات");
+
+  // 2. Specific Network interruption failure detection
+  const isNetworkError =
+    msg === "Failed to fetch" ||
+    lower.includes("networkerror") ||
+    lower.includes("net::err_") ||
+    lower.includes("aborted") ||
+    lower.includes("missing result") ||
+    lower.includes("load failed") ||
+    msg.includes("تعذر الاتصال بالخادم") ||
+    (typeof navigator !== "undefined" && !navigator.onLine);
+
+  if (isDbError) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("system-connection-error", {
+          detail: {
+            category: "database",
+            message: "تعذر الاتصال بقاعدة البيانات",
+            details: msg,
+          },
+        })
+      );
+    }
+  } else if (isNetworkError) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("system-connection-error", {
+          detail: {
+            category: "network",
+            message: "انقطاع في الاتصال بالشبكة",
+            details: msg,
+          },
+        })
+      );
+    }
+  }
+}
+
 queryClient.getQueryCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.query.state.error;
-    redirectToLoginIfUnauthorized(error);
-    const msg = (error as any)?.message || "";
-    if (
-      msg === "Failed to fetch" ||
-      msg.includes("aborted") ||
-      msg.includes("NetworkError") ||
-      msg.includes("Missing result") ||
-      msg.includes("تعذر الاتصال بالخادم")
-    ) {
-      console.warn("[API Query Network Notice]", msg);
-    } else {
-      console.error("[API Query Error]", error);
+    handleCategorizedError(error);
+  } else if (event.type === "updated" && event.action.type === "success") {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("system-connection-recovered"));
     }
   }
 });
@@ -108,18 +160,10 @@ queryClient.getQueryCache().subscribe(event => {
 queryClient.getMutationCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.mutation.state.error;
-    redirectToLoginIfUnauthorized(error);
-    const msg = (error as any)?.message || "";
-    if (
-      msg === "Failed to fetch" ||
-      msg.includes("aborted") ||
-      msg.includes("NetworkError") ||
-      msg.includes("Missing result") ||
-      msg.includes("تعذر الاتصال بالخادم")
-    ) {
-      console.warn("[API Mutation Network Notice]", msg);
-    } else {
-      console.error("[API Mutation Error]", error);
+    handleCategorizedError(error);
+  } else if (event.type === "updated" && event.action.type === "success") {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("system-connection-recovered"));
     }
   }
 });
@@ -224,6 +268,7 @@ const trpcClient = trpc.createClient({
 createRoot(document.getElementById("root")!).render(
   <trpc.Provider client={trpcClient} queryClient={queryClient}>
     <QueryClientProvider client={queryClient}>
+      <ConnectionErrorAlert />
       <App />
     </QueryClientProvider>
   </trpc.Provider>
