@@ -1,0 +1,6 @@
+[install]
+# Skip optional native compilation packages like node-gyp canvas
+optional = false
+
+[install.lockfile]
+print = "yarn"
