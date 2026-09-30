@@ -139,10 +139,7 @@ CREATE TABLE IF NOT EXISTS `archives` (
   INDEX `archives_file_id_idx` (`file_id`),
   INDEX `archives_file_number_idx` (`file_number`),
   INDEX `archives_status_idx` (`status`),
-  INDEX `archives_archived_at_idx` (`archived_at`),
-  CONSTRAINT `archives_file_id_incoming_files_id_fk`
-    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE
+  INDEX `archives_archived_at_idx` (`archived_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
@@ -173,9 +170,6 @@ CREATE TABLE IF NOT EXISTS `pdf_versions` (
   INDEX `pdf_versions_file_hash_idx` (`file_hash`),
   CONSTRAINT `pdf_versions_archive_id_archives_id_fk`
     FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `pdf_versions_file_id_incoming_files_id_fk`
-    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -228,7 +222,7 @@ CREATE TABLE IF NOT EXISTS `archive_transfers` (
   `completed_at` TIMESTAMP NULL,
   `attempt_count` INT NOT NULL DEFAULT 0,
   `error_message` TEXT NULL,
-  `source_reference` VARCHAR(255) NOT NULL DEFAULT 'cloud_firestore',
+  `source_reference` VARCHAR(255) NOT NULL DEFAULT 'cloud_sql_mysql',
   `destination_reference` VARCHAR(255) NOT NULL DEFAULT 'local_mysql',
   `payload_hash` VARCHAR(128) NULL,
   `pdf_hash` VARCHAR(128) NULL,
@@ -239,9 +233,6 @@ CREATE TABLE IF NOT EXISTS `archive_transfers` (
   INDEX `archive_transfers_file_id_idx` (`file_id`),
   INDEX `archive_transfers_archive_id_idx` (`archive_id`),
   INDEX `archive_transfers_status_idx` (`transfer_status`),
-  CONSTRAINT `archive_transfers_file_id_incoming_files_id_fk`
-    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `archive_transfers_archive_id_archives_id_fk`
     FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE

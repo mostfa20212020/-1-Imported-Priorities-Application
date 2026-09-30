@@ -86,6 +86,13 @@ export async function checkArchiveIntegrity(
 
   if (!archiveRecord) {
     missingParts.push("archive_record_missing");
+  } else if (archiveRecord.status !== "ARCHIVED") {
+    missingParts.push("archive_status_not_archived");
+  } else if (
+    archiveRecord.currentPdfHash &&
+    archiveRecord.currentPdfHash.toLowerCase() !== expectedPdfHash.toLowerCase()
+  ) {
+    missingParts.push("archive_pdf_hash_mismatch");
   }
 
   // 2. فحص وجود سجل Version 1 في pdf_versions
@@ -103,8 +110,10 @@ export async function checkArchiveIntegrity(
 
   if (!pdfVersionRecord) {
     missingParts.push("pdf_version_1_missing");
-  } else if (pdfVersionRecord.fileHash !== expectedPdfHash) {
+  } else if (pdfVersionRecord.fileHash.toLowerCase() !== expectedPdfHash.toLowerCase()) {
     missingParts.push("pdf_version_hash_mismatch");
+  } else if (pdfVersionRecord.fileSize <= 0) {
+    missingParts.push("pdf_version_invalid_file_size");
   }
 
   // 3. فحص وجود الملف الفعلي على القرص المحلي ومطابقة SHA-256
@@ -118,7 +127,7 @@ export async function checkArchiveIntegrity(
       diskFileValid = true;
     } else {
       diskFileError = diskCheck.error;
-      missingParts.push(`disk_pdf_${diskCheck.error}`);
+      missingParts.push(`disk_pdf_${diskCheck.error || "invalid"}`);
     }
   } catch (err: any) {
     diskFileError = err.message;
@@ -153,8 +162,8 @@ export async function checkArchiveIntegrity(
     // optional
   }
   const cloudHistory = await getFileHistory(file.id);
-  if (cloudHistory.length > 0 && fileHistoryCount === 0) {
-    missingParts.push("file_history_missing");
+  if (cloudHistory.length > 0 && fileHistoryCount < cloudHistory.length) {
+    missingParts.push("file_history_incomplete");
   }
 
   // 6. فحص سجل الترحيل archive_transfers
@@ -172,6 +181,11 @@ export async function checkArchiveIntegrity(
   }
   if (!transferRecord || transferRecord.transferStatus !== "COMPLETED") {
     missingParts.push("transfer_status_not_completed");
+  } else if (
+    transferRecord.pdfHash &&
+    transferRecord.pdfHash.toLowerCase() !== expectedPdfHash.toLowerCase()
+  ) {
+    missingParts.push("transfer_pdf_hash_mismatch");
   }
 
   const isFullyArchived = missingParts.length === 0 && diskFileValid;
@@ -591,7 +605,18 @@ export async function transferTransactionToLocalArchive(
       }
 
       // ج) إنشاء أو استكمال سجل الأرشيف (archives) المستقل وغير المعتمد على cascade delete
-      if (archiveId) {
+      let existingArchive = integrity.archiveRecord;
+      if (!existingArchive) {
+        const found = await tx
+          .select()
+          .from(archives)
+          .where(eq(archives.fileId, file.id))
+          .limit(1);
+        if (found.length > 0) existingArchive = found[0];
+      }
+
+      if (existingArchive) {
+        archiveId = existingArchive.id;
         await tx
           .update(archives)
           .set({
@@ -642,7 +667,18 @@ export async function transferTransactionToLocalArchive(
       }
 
       // د) إنشاء أو استكمال سجل النسخة الأولى (pdf_versions - Version 1)
-      if (versionId) {
+      let existingVersion = integrity.pdfVersionRecord;
+      if (!existingVersion && archiveId) {
+        const found = await tx
+          .select()
+          .from(pdfVersions)
+          .where(and(eq(pdfVersions.archiveId, archiveId), eq(pdfVersions.versionNumber, 1)))
+          .limit(1);
+        if (found.length > 0) existingVersion = found[0];
+      }
+
+      if (existingVersion) {
+        versionId = existingVersion.id;
         await tx
           .update(pdfVersions)
           .set({
@@ -694,6 +730,26 @@ export async function transferTransactionToLocalArchive(
         deviceInfo: "Local Archive Ingestion Agent v2.5",
       });
 
+      // التحقق الصارم والشامل قبل ترقية حالة الترحيل إلى COMPLETED (Requirement 11)
+      if (!archiveId || archiveId <= 0) {
+        throw new Error("فشل التحقق النهائي: معرف الأرشيف archiveId غير صالح");
+      }
+      if (!versionId || versionId <= 0) {
+        throw new Error("فشل التحقق النهائي: معرف إصدار الـ PDF versionId غير صالح");
+      }
+      if (!savedFile.relativePath || savedFile.fileSize <= 0) {
+        throw new Error("فشل التحقق النهائي: مسار أو حجم ملف الـ PDF غير صالح");
+      }
+      if (cloudHistory.length > 0) {
+        const currentLocalHistory = await tx
+          .select()
+          .from(fileHistory)
+          .where(eq(fileHistory.fileId, file.id));
+        if (currentLocalHistory.length < cloudHistory.length) {
+          throw new Error("فشل التحقق النهائي: لم يتم نقل كامل سجل تاريخ الإجراءات إلى Local MySQL");
+        }
+      }
+
       // و) تحديث سجل الترحيل archive_transfers واعتباره COMPLETED
       if (transferId) {
         await tx
@@ -706,6 +762,20 @@ export async function transferTransactionToLocalArchive(
             errorMessage: null,
           })
           .where(eq(archiveTransfers.id, transferId));
+      } else {
+        const [transInsert] = await tx.insert(archiveTransfers).values({
+          fileId: file.id,
+          archiveId,
+          transferStatus: "COMPLETED",
+          attemptCount: 1,
+          startedAt: new Date(),
+          completedAt: new Date(),
+          lastAttemptAt: new Date(),
+          sourceReference: "cloud_sql_mysql",
+          destinationReference: "local_mysql",
+          pdfHash: expectedPdfHash,
+        });
+        transferId = Number((transInsert as any)?.insertId || (transInsert as any)?.id || 0);
       }
     };
 

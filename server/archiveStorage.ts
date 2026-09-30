@@ -154,9 +154,11 @@ export async function verifyArchivePdfIntegrity(
     const absolutePath = resolveArchiveAbsolutePath(relativePath);
     const content = await fs.readFile(absolutePath);
     const actualHash = computePdfHash(content);
+    const isValid = actualHash.toLowerCase() === expectedHash.toLowerCase();
     return {
-      isValid: actualHash.toLowerCase() === expectedHash.toLowerCase(),
+      isValid,
       actualHash,
+      error: isValid ? undefined : "HASH_MISMATCH",
     };
   } catch (err: any) {
     return {

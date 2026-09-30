@@ -545,4 +545,56 @@ describe("Phase 3 Refinements: Transfer System, Recovery, Transactions & Integri
     expect(cloudFile?.fileNumber).toBe(fileNum);
     expect(cloudFile?.signedFileKey).toBe("cloud-signed-key");
   });
+
+  it("الحالة 9 — وجود بيانات في MySQL مع فشل الـ PDF: لا تعتبر العملية COMPLETED بل قابلة للاستكمال", async () => {
+    const fileNum = `TEST-MYSQL-FIRST-${Date.now()}`;
+    const created = await createIncomingFile({
+      fileNumber: fileNum,
+      year: 2026,
+      arrivalDate: new Date(),
+      sourceEntity: "المحكمة الابتدائية",
+      fileType: "وارد عام",
+      subject: "فحص حالة بيانات MySQL موجودة وPDF يفشل",
+      importance: "normal",
+      status: "completed",
+      isSigned: true,
+    });
+
+    // محاكاة حالة وجود بيانات أرشيف مسبقاً في Local MySQL
+    mockLocalDb.archivesTable.push({
+      id: 888,
+      fileId: created.id,
+      fileNumber: fileNum,
+      year: 2026,
+      status: "ARCHIVED",
+      currentPdfVersion: 1,
+      originalPdfHash: computePdfHash(samplePdfBytes),
+      currentPdfHash: computePdfHash(samplePdfBytes),
+    });
+
+    // محاولة الترحيل مع ملف PDF تالف أو غير صالح (لا يبدأ بـ %PDF-)
+    const corruptedPdfBytes = Buffer.from("NOT_A_VALID_PDF_FILE");
+    const failResult = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: corruptedPdfBytes,
+    });
+
+    // التحقق: لا تعتبر العملية COMPLETED بل فشلت لعدم صلاحية الـ PDF
+    expect(failResult.success).toBe(false);
+    expect(failResult.status).toBe("FAILED");
+    expect(failResult.error).toBe("INVALID_PDF_FORMAT");
+
+    // استكمال العملية عند توفير الـ PDF السليم
+    const successResult = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+
+    expect(successResult.success).toBe(true);
+    expect(successResult.status).toBe("COMPLETED");
+    expect(successResult.isRecovered).toBe(true);
+    // التأكد من عدم تكرار سجل الـ archives (يبقى 1 فقط)
+    expect(mockLocalDb.archivesTable).toHaveLength(1);
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(1);
+  });
 });
