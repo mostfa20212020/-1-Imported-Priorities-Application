@@ -6,14 +6,16 @@ import {
   saveArchivePdfVersion,
   verifyArchivePdfIntegrity,
   readArchivePdf,
+  buildArchiveRelativePath,
 } from "./archiveStorage.ts";
-import { getLocalDb, isLocalMysqlConfigured } from "../src/db/localMysql.ts";
+import { getLocalDb } from "../src/db/localMysql.ts";
 import {
   archives,
   pdfVersions,
   auditLogs,
   archiveTransfers,
   incomingFiles,
+  fileHistory,
 } from "../src/db/schema.ts";
 
 export type TransferResultStatus =
@@ -36,18 +38,159 @@ export interface TransferResult {
   transferId?: number;
   error?: string;
   isRetryable?: boolean;
+  isRecovered?: boolean;
 }
 
 export interface TransferOptions {
   actorName?: string;
   userId?: number;
   overrideLocalDb?: any;
-  overridePdfBytes?: Buffer; // For testing or direct pass
+  overridePdfBytes?: Buffer;
+}
+
+export interface ArchiveIntegrityCheck {
+  isFullyArchived: boolean;
+  archiveRecord: any | null;
+  pdfVersionRecord: any | null;
+  incomingFileRecord: any | null;
+  fileHistoryCount: number;
+  transferRecord: any | null;
+  diskFileValid: boolean;
+  diskFileError?: string;
+  missingParts: string[];
 }
 
 /**
- * دالة ترحيل المعاملة المكتملة من Cloud SQL إلى MySQL المحلية والأرشيف المحلي
- * تنفذ الـ 13 خطوة الإلزامية مع ضمان الـ Idempotency وحماية البيانات من الفقدان
+ * فحص شامل لسلامة واكتمال حالة الأرشفة للمعاملة في Local MySQL والقرص
+ * يمنع اعتبار المعاملة ALREADY_ARCHIVED إلا إذا كانت جميع الأجزاء الـ 8 متوفرة وسليمة 100%
+ */
+export async function checkArchiveIntegrity(
+  localDb: any,
+  file: NonNullable<Awaited<ReturnType<typeof getIncomingFile>>>,
+  expectedPdfHash: string
+): Promise<ArchiveIntegrityCheck> {
+  const missingParts: string[] = [];
+
+  // 1. فحص وجود سجل الأرشيف archives
+  let archiveRecord: any = null;
+  try {
+    const res = await localDb
+      .select()
+      .from(archives)
+      .where(eq(archives.fileId, file.id))
+      .limit(1);
+    if (res.length > 0) archiveRecord = res[0];
+  } catch (err: any) {
+    missingParts.push(`archives_query_error: ${err.message}`);
+  }
+
+  if (!archiveRecord) {
+    missingParts.push("archive_record_missing");
+  }
+
+  // 2. فحص وجود سجل Version 1 في pdf_versions
+  let pdfVersionRecord: any = null;
+  try {
+    const res = await localDb
+      .select()
+      .from(pdfVersions)
+      .where(and(eq(pdfVersions.fileId, file.id), eq(pdfVersions.versionNumber, 1)))
+      .limit(1);
+    if (res.length > 0) pdfVersionRecord = res[0];
+  } catch (err: any) {
+    missingParts.push(`pdf_versions_query_error: ${err.message}`);
+  }
+
+  if (!pdfVersionRecord) {
+    missingParts.push("pdf_version_1_missing");
+  } else if (pdfVersionRecord.fileHash !== expectedPdfHash) {
+    missingParts.push("pdf_version_hash_mismatch");
+  }
+
+  // 3. فحص وجود الملف الفعلي على القرص المحلي ومطابقة SHA-256
+  const { relativePath } = buildArchiveRelativePath(file.year, file.fileNumber, 1);
+  let diskFileValid = false;
+  let diskFileError: string | undefined;
+
+  try {
+    const diskCheck = await verifyArchivePdfIntegrity(relativePath, expectedPdfHash);
+    if (diskCheck.isValid) {
+      diskFileValid = true;
+    } else {
+      diskFileError = diskCheck.error;
+      missingParts.push(`disk_pdf_${diskCheck.error}`);
+    }
+  } catch (err: any) {
+    diskFileError = err.message;
+    missingParts.push(`disk_pdf_read_error: ${err.message}`);
+  }
+
+  // 4. فحص وجود سجل المعاملة التشغيلي في incoming_files في Local MySQL
+  let incomingFileRecord: any = null;
+  try {
+    const res = await localDb
+      .select()
+      .from(incomingFiles)
+      .where(eq(incomingFiles.id, file.id))
+      .limit(1);
+    if (res.length > 0) incomingFileRecord = res[0];
+  } catch {
+    // optional
+  }
+  if (!incomingFileRecord) {
+    missingParts.push("incoming_file_snapshot_missing");
+  }
+
+  // 5. فحص وجود سجل الحركات والتوجيهات file_history في Local MySQL
+  let fileHistoryCount = 0;
+  try {
+    const res = await localDb
+      .select()
+      .from(fileHistory)
+      .where(eq(fileHistory.fileId, file.id));
+    fileHistoryCount = res.length;
+  } catch {
+    // optional
+  }
+  if (fileHistoryCount === 0) {
+    missingParts.push("file_history_missing");
+  }
+
+  // 6. فحص سجل الترحيل archive_transfers
+  let transferRecord: any = null;
+  try {
+    const res = await localDb
+      .select()
+      .from(archiveTransfers)
+      .where(eq(archiveTransfers.fileId, file.id))
+      .orderBy(desc(archiveTransfers.id))
+      .limit(1);
+    if (res.length > 0) transferRecord = res[0];
+  } catch {
+    // optional
+  }
+  if (!transferRecord || transferRecord.transferStatus !== "COMPLETED") {
+    missingParts.push("transfer_status_not_completed");
+  }
+
+  const isFullyArchived = missingParts.length === 0 && diskFileValid;
+
+  return {
+    isFullyArchived,
+    archiveRecord,
+    pdfVersionRecord,
+    incomingFileRecord,
+    fileHistoryCount,
+    transferRecord,
+    diskFileValid,
+    diskFileError,
+    missingParts,
+  };
+}
+
+/**
+ * دالة الترحيل والاستئناف (Transfer & Recovery) من Cloud SQL إلى Local MySQL
+ * مع دعم Transactions الكامل، والـ Idempotency الصارمة، ونقل التاريخ وسجل العمليات
  */
 export async function transferTransactionToLocalArchive(
   fileId: number,
@@ -55,7 +198,7 @@ export async function transferTransactionToLocalArchive(
 ): Promise<TransferResult> {
   const actorName = options.actorName || "نظام الترحيل الآلي";
 
-  // 1. قراءة بيانات المعاملة من Cloud SQL والتحقق من وجودها
+  // 1. قراءة بيانات المعاملة الرسمية من Cloud SQL MySQL
   const file = await getIncomingFile(fileId);
   if (!file) {
     return {
@@ -64,13 +207,13 @@ export async function transferTransactionToLocalArchive(
       fileId,
       fileNumber: `ID-${fileId}`,
       attemptCount: 0,
-      message: `المعاملة رقم (${fileId}) غير موجودة في Cloud SQL`,
+      message: `المعاملة رقم (${fileId}) غير موجودة في Cloud SQL MySQL`,
       error: "FILE_NOT_FOUND",
       isRetryable: false,
     };
   }
 
-  // 2. التحقق من أن المعاملة مكتملة بالكامل
+  // 2. التحقق من اكتمال المعاملة بالكامل
   const isCompleted =
     file.status === "completed" ||
     file.status === "COMPLETED" ||
@@ -83,7 +226,7 @@ export async function transferTransactionToLocalArchive(
       fileId: file.id,
       fileNumber: file.fileNumber,
       attemptCount: 0,
-      message: `المعاملة غير مكتملة (حالتها الحالية: ${file.status}). لا يمكن ترحيلها إلى الأرشيف قبل اكتمالها وتوقيعها رسمياً.`,
+      message: `المعاملة غير مكتملة (حالتها الحالية: ${file.status}). يجب اكتمال كافة الإجراءات وتوقيع النائب العام قبل الترحيل.`,
       error: "TRANSACTION_NOT_COMPLETED",
       isRetryable: false,
     };
@@ -98,13 +241,13 @@ export async function transferTransactionToLocalArchive(
       fileId: file.id,
       fileNumber: file.fileNumber,
       attemptCount: 0,
-      message: "ملف الـ PDF النهائي الموقع غير موجود في سجل المعاملة",
+      message: "ملف الـ PDF النهائي الموقع إلكترونياً غير موجود في سجل المعاملة",
       error: "SIGNED_PDF_MISSING",
       isRetryable: false,
     };
   }
 
-  // 4. التحقق من توفر وتهيئة اتصال MySQL المحلية
+  // 4. التحقق من توفر وتهيئة اتصال Local MySQL
   const localDb = options.overrideLocalDb || getLocalDb();
   if (!localDb) {
     return {
@@ -114,33 +257,69 @@ export async function transferTransactionToLocalArchive(
       fileNumber: file.fileNumber,
       attemptCount: 0,
       message:
-        "قاعدة بيانات MySQL المحلية غير مهيأة (LOCAL_MYSQL_NOT_CONFIGURED). يرجى ضبط متغيرات LOCAL_MYSQL_* في بيئة التشغيل.",
+        "قاعدة بيانات MySQL المحلية غير مهيأة (LOCAL_MYSQL_NOT_CONFIGURED). يرجى ضبط المتغيرات في البيئة.",
       error: "LOCAL_MYSQL_NOT_CONFIGURED",
       isRetryable: true,
     };
   }
 
-  // 5. فحص منع الترحيل المكرر (Idempotency)
-  // إذا كانت المعاملة مؤرشفة بالفعل في Local MySQL، لا يتم إنشاء أرشيف جديد أو إصدار مكرر
-  try {
-    const existingArchive = await localDb
-      .select()
-      .from(archives)
-      .where(eq(archives.fileId, file.id))
-      .limit(1);
-
-    if (existingArchive.length > 0) {
+  // 5. استرجاع وقراءة الـ PDF النهائي من نظام التخزين الحالي (server/storage.ts)
+  let pdfBuffer: Buffer | null = null;
+  if (options.overridePdfBytes) {
+    pdfBuffer = options.overridePdfBytes;
+  } else if (pdfKey) {
+    try {
+      pdfBuffer = await getFileBytes(pdfKey);
+    } catch (readErr: any) {
       return {
-        success: true,
-        status: "ALREADY_ARCHIVED",
+        success: false,
+        status: "FAILED",
         fileId: file.id,
         fileNumber: file.fileNumber,
-        archiveId: existingArchive[0].id,
-        pdfHash: existingArchive[0].originalPdfHash || undefined,
         attemptCount: 1,
-        message: `المعاملة (${file.fileNumber}) مؤرشفة بالفعل مسبقاً في Local MySQL (معرف الأرشيف: ${existingArchive[0].id}). لن يتم تكرار الترحيل.`,
+        message: `فشل استرجاع ملف الـ PDF من التخزين: ${readErr?.message || "خطأ في التخزين"}`,
+        error: "STORAGE_READ_ERROR",
+        isRetryable: true,
       };
     }
+  }
+
+  if (!pdfBuffer || pdfBuffer.length === 0) {
+    return {
+      success: false,
+      status: "FAILED",
+      fileId: file.id,
+      fileNumber: file.fileNumber,
+      attemptCount: 1,
+      message: "محتوى ملف الـ PDF فارغ أو غير متوفر في نظام التخزين",
+      error: "EMPTY_PDF_CONTENT",
+      isRetryable: true,
+    };
+  }
+
+  // 6. التحقق من صحة ترويسة ملف الـ PDF (%PDF-)
+  const pdfHeader = pdfBuffer.subarray(0, 5).toString("ascii");
+  if (!pdfHeader.startsWith("%PDF-")) {
+    return {
+      success: false,
+      status: "FAILED",
+      fileId: file.id,
+      fileNumber: file.fileNumber,
+      attemptCount: 1,
+      message: "محتوى الملف تالف أو لا يمثل وثيقة PDF صالحة (مفقود %PDF-)",
+      error: "INVALID_PDF_FORMAT",
+      isRetryable: false,
+    };
+  }
+
+  // 7. حساب البصمة الرقمية المعتمدة SHA-256 للمستند وحجم الملف
+  const expectedPdfHash = computePdfHash(pdfBuffer);
+  const fileSize = pdfBuffer.length;
+
+  // 8. فحص النزاهة الشامل وحالة الترحيل الحالية (Idempotency & Partial Failure Detection)
+  let integrity: ArchiveIntegrityCheck;
+  try {
+    integrity = await checkArchiveIntegrity(localDb, file, expectedPdfHash);
   } catch (err: any) {
     return {
       success: false,
@@ -154,51 +333,62 @@ export async function transferTransactionToLocalArchive(
     };
   }
 
-  // 6. استرجاع وتحديث سجل الترحيل archive_transfers
-  let transferId: number | undefined;
-  let attemptCount = 1;
+  // إذا كانت المعاملة مؤرشفة بالكامل وبكل عناصرها دون أي نقص
+  if (integrity.isFullyArchived) {
+    return {
+      success: true,
+      status: "ALREADY_ARCHIVED",
+      fileId: file.id,
+      fileNumber: file.fileNumber,
+      archiveId: integrity.archiveRecord?.id,
+      versionId: integrity.pdfVersionRecord?.id,
+      pdfPath: integrity.pdfVersionRecord?.filePath,
+      pdfHash: integrity.pdfVersionRecord?.fileHash || expectedPdfHash,
+      attemptCount: integrity.transferRecord?.attemptCount || 1,
+      transferId: integrity.transferRecord?.id,
+      message: `المعاملة (${file.fileNumber}) مؤرشفة بالكامل ومحققة النزاهة مسبقاً في Local MySQL (معرف الأرشيف: ${integrity.archiveRecord?.id}). لن يتم تكرار الترحيل.`,
+    };
+  }
 
+  // إذا وجد ملف على القرص ولكن الـ Hash غير مطابق (تلف أو عبث)
+  if (integrity.diskFileError === "HASH_MISMATCH") {
+    return {
+      success: false,
+      status: "FAILED",
+      fileId: file.id,
+      fileNumber: file.fileNumber,
+      attemptCount: (integrity.transferRecord?.attemptCount || 0) + 1,
+      message: "فشل التحقق من سلامة الملف: بصمة الـ PDF على القرص لا تطابق البصمة الرسمية المعتمدة (HASH_MISMATCH)",
+      error: "HASH_MISMATCH",
+      isRetryable: false,
+    };
+  }
+
+  // تحديد ما إذا كانت هذه المحاولة استئناف لعملية سابقة غير مكتملة (Recovery)
+  const isRecovery = Boolean(
+    integrity.archiveRecord ||
+    integrity.transferRecord ||
+    integrity.diskFileValid ||
+    integrity.pdfVersionRecord
+  );
+
+  const attemptCount = (integrity.transferRecord?.attemptCount || 0) + 1;
+  let transferId = integrity.transferRecord?.id;
+
+  // 9. تهيئة أو تحديث سجل تتبع الترحيل archive_transfers بحالة TRANSFERRING / RETRYING
   try {
-    const existingTransfers = await localDb
-      .select()
-      .from(archiveTransfers)
-      .where(eq(archiveTransfers.fileId, file.id))
-      .orderBy(desc(archiveTransfers.id))
-      .limit(1);
-
-    if (existingTransfers.length > 0) {
-      attemptCount = (existingTransfers[0].attemptCount || 0) + 1;
-      transferId = existingTransfers[0].id;
-
-      // إذا كان الترحيل مكتملاً بالفعل
-      if (existingTransfers[0].transferStatus === "COMPLETED") {
-        return {
-          success: true,
-          status: "ALREADY_ARCHIVED",
-          fileId: file.id,
-          fileNumber: file.fileNumber,
-          archiveId: existingTransfers[0].archiveId || undefined,
-          pdfHash: existingTransfers[0].pdfHash || undefined,
+    if (transferId) {
+      await localDb
+        .update(archiveTransfers)
+        .set({
+          transferStatus: isRecovery ? "RETRYING" : "TRANSFERRING",
           attemptCount,
-          message: `المعاملة (${file.fileNumber}) تم ترحيلها مسبقاً بنجاح وحالتها COMPLETED.`,
-        };
-      }
-
-      if (transferId) {
-        await localDb
-          .update(archiveTransfers)
-          .set({
-            transferStatus: "TRANSFERRING",
-            attemptCount,
-            lastAttemptAt: new Date(),
-            startedAt: existingTransfers[0].startedAt || new Date(),
-            errorMessage: null,
-          })
-          .where(eq(archiveTransfers.id, transferId));
-      }
+          lastAttemptAt: new Date(),
+          errorMessage: null,
+        })
+        .where(eq(archiveTransfers.id, transferId));
     } else {
-      // إدراج سجل الترحيل الأول
-      const [insertResult] = await localDb.insert(archiveTransfers).values({
+      const [insertRes] = await localDb.insert(archiveTransfers).values({
         fileId: file.id,
         transferStatus: "TRANSFERRING",
         attemptCount: 1,
@@ -206,101 +396,69 @@ export async function transferTransactionToLocalArchive(
         lastAttemptAt: new Date(),
         sourceReference: "cloud_sql_mysql",
         destinationReference: "local_mysql",
+        pdfHash: expectedPdfHash,
       });
-      transferId = (insertResult as any)?.insertId;
+      transferId = (insertRes as any)?.insertId || (insertRes as any)?.id;
     }
   } catch (err: any) {
-    console.warn("[ArchiveTransfer] Could not update transfer record:", err);
+    console.warn("[ArchiveTransfer] Could not update transfer status in DB:", err);
   }
 
-  // 7. قراءة الـ PDF النهائي من نظام التخزين الحالي (server/storage.ts)
-  let pdfBuffer: Buffer | null = null;
-  if (options.overridePdfBytes) {
-    pdfBuffer = options.overridePdfBytes;
-  } else if (pdfKey) {
+  // 10. حفظ ملف الـ PDF في مجلد الأرشيف المنظم على القرص المحلي (server/archiveStorage.ts)
+  const { relativePath, fileName } = buildArchiveRelativePath(file.year, file.fileNumber, 1);
+  let savedFile = {
+    fileName,
+    relativePath,
+    fileSize,
+    fileHash: expectedPdfHash,
+    versionNumber: 1,
+  };
+
+  // إذا لم يكن الملف محفوظاً وسليماً بالفعل على القرص، نقوم بحفظه
+  if (!integrity.diskFileValid) {
     try {
-      pdfBuffer = await getFileBytes(pdfKey);
-    } catch (readErr: any) {
-      const errMsg = `فشل استرجاع ملف الـ PDF من نظام التخزين: ${readErr?.message || "خطأ غير معروف"}`;
-      await recordTransferFailure(localDb, transferId, errMsg);
-      return {
-        success: false,
-        status: "FAILED",
-        fileId: file.id,
+      const saveRes = await saveArchivePdfVersion({
+        year: file.year,
         fileNumber: file.fileNumber,
-        attemptCount,
-        message: errMsg,
-        error: "STORAGE_READ_ERROR",
-        isRetryable: true,
+        versionNumber: 1,
+        pdfBuffer,
+        allowOverwrite: false,
+      });
+      savedFile = {
+        fileName: saveRes.fileName,
+        relativePath: saveRes.relativePath,
+        fileSize: saveRes.fileSize,
+        fileHash: saveRes.fileHash,
+        versionNumber: 1,
       };
-    }
-  }
-
-  if (!pdfBuffer || pdfBuffer.length === 0) {
-    const errMsg = "محتوى ملف الـ PDF فارغ أو غير موجود في نظام التخزين";
-    await recordTransferFailure(localDb, transferId, errMsg);
-    return {
-      success: false,
-      status: "FAILED",
-      fileId: file.id,
-      fileNumber: file.fileNumber,
-      attemptCount,
-      message: errMsg,
-      error: "EMPTY_PDF_CONTENT",
-      isRetryable: true,
-    };
-  }
-
-  // 8. التحقق من سلامة ترويسة ملف الـ PDF
-  const pdfHeader = pdfBuffer.subarray(0, 5).toString("ascii");
-  if (!pdfHeader.startsWith("%PDF-")) {
-    const errMsg = "الملف المسترجع تالف أو لا يمثل مستند PDF صالح (مفقود %PDF-)";
-    await recordTransferFailure(localDb, transferId, errMsg);
-    return {
-      success: false,
-      status: "FAILED",
-      fileId: file.id,
-      fileNumber: file.fileNumber,
-      attemptCount,
-      message: errMsg,
-      error: "INVALID_PDF_FORMAT",
-      isRetryable: false,
-    };
-  }
-
-  // 9. حساب البصمة الرقمية SHA-256 قبل الحفظ
-  const initialHash = computePdfHash(pdfBuffer);
-  const fileSize = pdfBuffer.length;
-
-  // 10. حفظ الـ PDF في مجلد الأرشيف المحلي عبر server/archiveStorage.ts
-  let savedFile;
-  try {
-    savedFile = await saveArchivePdfVersion({
-      year: file.year,
-      fileNumber: file.fileNumber,
-      versionNumber: 1,
-      pdfBuffer,
-      allowOverwrite: false, // حظر قاطع لأي كتابة فوق ملف موجود
-    });
-  } catch (saveErr: any) {
-    // إذا كان الملف موجوداً مسبقاً على القرص لنفس الإصدار، نفحص هل هو مطابق
-    if (saveErr.message?.includes("موجود مسبقاً")) {
-      const { relativePath, fileName } = await import("./archiveStorage.ts").then((m) =>
-        m.buildArchiveRelativePath(file.year, file.fileNumber, 1)
-      );
-      const existingCheck = await verifyArchivePdfIntegrity(relativePath, initialHash);
-      if (existingCheck.isValid) {
-        savedFile = {
-          fileName,
-          relativePath,
-          absolutePath: "",
-          fileSize,
-          fileHash: initialHash,
-          mimeType: "application/pdf",
-          versionNumber: 1,
-        };
+    } catch (saveErr: any) {
+      if (saveErr.message?.includes("موجود مسبقاً")) {
+        // فحص الـ Hash للملف الموجود للتأكد من مطابقته
+        const existingCheck = await verifyArchivePdfIntegrity(relativePath, expectedPdfHash);
+        if (existingCheck.isValid) {
+          savedFile = {
+            fileName,
+            relativePath,
+            fileSize,
+            fileHash: expectedPdfHash,
+            versionNumber: 1,
+          };
+        } else {
+          const errMsg = `ملف الإصدار 1 موجود مسبقاً على القرص ولكن بـ Hash غير مطابق (تلف في التخزين)!`;
+          await recordTransferFailure(localDb, transferId, errMsg);
+          return {
+            success: false,
+            status: "FAILED",
+            fileId: file.id,
+            fileNumber: file.fileNumber,
+            attemptCount,
+            message: errMsg,
+            error: "HASH_MISMATCH",
+            isRetryable: false,
+          };
+        }
       } else {
-        const errMsg = `ملف الإصدار 1 موجود مسبقاً على القرص ولكن بـ Hash مختلف عن النسخة المعتمدة!`;
+        const errMsg = `فشل حفظ ملف الـ PDF على القرص: ${saveErr.message}`;
         await recordTransferFailure(localDb, transferId, errMsg);
         return {
           success: false,
@@ -309,33 +467,19 @@ export async function transferTransactionToLocalArchive(
           fileNumber: file.fileNumber,
           attemptCount,
           message: errMsg,
-          error: "EXISTING_FILE_CORRUPTED",
-          isRetryable: false,
+          error: saveErr.message,
+          isRetryable: true,
         };
       }
-    } else {
-      const errMsg = `فشل حفظ ملف الـ PDF على القرص المحلي للأرشيف: ${saveErr.message}`;
-      await recordTransferFailure(localDb, transferId, errMsg);
-      return {
-        success: false,
-        status: "FAILED",
-        fileId: file.id,
-        fileNumber: file.fileNumber,
-        attemptCount,
-        message: errMsg,
-        error: saveErr.message,
-        isRetryable: true,
-      };
     }
   }
 
-  // 11. إعادة قراءة الملف من القرص والتحقق الصارم من الـ Hash والحجم (Double-Check Integrity)
+  // التحقق الحتمي المزدوج من الـ Hash والحجم بعد الحفظ على القرص
   try {
-    const verifiedDiskBuffer = await readArchivePdf(savedFile.relativePath);
-    const diskHash = computePdfHash(verifiedDiskBuffer);
-
-    if (diskHash.toLowerCase() !== initialHash.toLowerCase()) {
-      const errMsg = `فشل التحقق من صحة الملف: الـ Hash على القرص (${diskHash}) لا يطابق الـ Hash الأصلي (${initialHash})`;
+    const diskBuffer = await readArchivePdf(savedFile.relativePath);
+    const diskHash = computePdfHash(diskBuffer);
+    if (diskHash.toLowerCase() !== expectedPdfHash.toLowerCase()) {
+      const errMsg = `فشل التحقق من نزاهة الملف على القرص: عدم تطابق الـ Hash (${diskHash} مقابل ${expectedPdfHash})`;
       await recordTransferFailure(localDb, transferId, errMsg);
       return {
         success: false,
@@ -348,23 +492,8 @@ export async function transferTransactionToLocalArchive(
         isRetryable: true,
       };
     }
-
-    if (verifiedDiskBuffer.length !== fileSize) {
-      const errMsg = `فشل التحقق من حجم الملف: حجم القرص (${verifiedDiskBuffer.length}) لا يطابق الحجم الأصلي (${fileSize})`;
-      await recordTransferFailure(localDb, transferId, errMsg);
-      return {
-        success: false,
-        status: "FAILED",
-        fileId: file.id,
-        fileNumber: file.fileNumber,
-        attemptCount,
-        message: errMsg,
-        error: "SIZE_MISMATCH",
-        isRetryable: true,
-      };
-    }
   } catch (verifyErr: any) {
-    const errMsg = `فشل قراءة الملف والتحقق من سلامته بعد الحفظ: ${verifyErr.message}`;
+    const errMsg = `فشل قراءة الملف والتحقق من سلامته: ${verifyErr.message}`;
     await recordTransferFailure(localDb, transferId, errMsg);
     return {
       success: false,
@@ -378,111 +507,212 @@ export async function transferTransactionToLocalArchive(
     };
   }
 
-  // 12. نقل بيانات المعاملة إلى Local MySQL وإنشاء سجل الأرشيف و Version 1
+  // 11. تنفيذ عمليات قاعدة البيانات داخل Database Transaction موحدة (Atomic Transaction)
+  // تضمن عدم ترك أي بيانات معلقة عند حدوث أي خطأ (Rollback on failure)
+  let archiveId: number = integrity.archiveRecord?.id || 0;
+  let versionId: number = integrity.pdfVersionRecord?.id || 0;
+
   try {
-    // أ) التأكد من وجود سجل المعاملة incoming_files في Local MySQL لتلبية قيود المفاتيح الأجنبية
-    const existingLocalFiles = await localDb
-      .select({ id: incomingFiles.id })
-      .from(incomingFiles)
-      .where(eq(incomingFiles.id, file.id))
-      .limit(1);
+    // جلب سجل الحركات والتاريخ الرسمي من Cloud SQL لنقله
+    const cloudHistory = await getFileHistory(file.id);
 
-    if (existingLocalFiles.length === 0) {
-      await localDb.insert(incomingFiles).values({
-        id: file.id,
-        fileNumber: file.fileNumber,
-        year: file.year,
-        arrivalDate: file.arrivalDate,
-        sourceEntity: file.sourceEntity,
-        fileType: file.fileType,
-        subject: file.subject,
-        importance: file.importance,
-        status: "completed",
-        originalFileKey: file.originalFileKey,
-        originalFileUrl: file.originalFileUrl,
-        originalFileName: file.originalFileName,
-        originalMimeType: file.originalMimeType,
-        signedFileKey: file.signedFileKey,
-        signedFileUrl: file.signedFileUrl,
-        isSigned: file.isSigned,
-        signatureName: file.signatureName,
-        signatureTitle: file.signatureTitle,
-        signedAt: file.signedAt,
-        signedInstruction: file.signedInstruction,
-        assignedDepartment: file.assignedDepartment,
-        assignedEmployee: file.assignedEmployee,
-        directorInstruction: file.directorInstruction,
-        notes: file.notes,
-        dueDate: file.dueDate,
-        registeredBy: file.registeredBy,
-        currentResponsible: file.currentResponsible,
-        createdAt: file.createdAt,
-        updatedAt: file.updatedAt,
-        directedAt: file.directedAt,
-        completedAt: file.completedAt || new Date(),
-      });
-    }
+    const executeInTransaction = async (tx: any) => {
+      // أ) حفظ/تحديث نسخة المعاملة التشغيلية في incoming_files المحلية
+      const existingLocalFile = await tx
+        .select({ id: incomingFiles.id })
+        .from(incomingFiles)
+        .where(eq(incomingFiles.id, file.id))
+        .limit(1);
 
-    // ب) إنشاء سجل الأرشيف (archives) في Local MySQL
-    const [archiveInsert] = await localDb.insert(archives).values({
-      fileId: file.id,
-      fileNumber: file.fileNumber,
-      archivedAt: new Date(),
-      archivedBy: actorName,
-      status: "ARCHIVED",
-      currentPdfVersion: 1,
-      originalPdfVersion: 1,
-      originalPdfHash: initialHash,
-      currentPdfHash: initialHash,
-      notes: file.notes || null,
-    });
-    const archiveId = (archiveInsert as any)?.insertId;
+      if (existingLocalFile.length === 0) {
+        await tx.insert(incomingFiles).values({
+          id: file.id,
+          fileNumber: file.fileNumber,
+          year: file.year,
+          arrivalDate: file.arrivalDate,
+          sourceEntity: file.sourceEntity,
+          fileType: file.fileType,
+          subject: file.subject,
+          importance: file.importance,
+          status: "completed",
+          originalFileKey: file.originalFileKey,
+          originalFileUrl: file.originalFileUrl,
+          originalFileName: file.originalFileName,
+          originalMimeType: file.originalMimeType,
+          signedFileKey: file.signedFileKey,
+          signedFileUrl: file.signedFileUrl,
+          isSigned: file.isSigned,
+          signatureName: file.signatureName,
+          signatureTitle: file.signatureTitle,
+          signedAt: file.signedAt,
+          signedInstruction: file.signedInstruction,
+          assignedDepartment: file.assignedDepartment,
+          assignedEmployee: file.assignedEmployee,
+          directorInstruction: file.directorInstruction,
+          notes: file.notes,
+          dueDate: file.dueDate,
+          registeredBy: file.registeredBy,
+          currentResponsible: file.currentResponsible,
+          createdAt: file.createdAt,
+          updatedAt: file.updatedAt,
+          directedAt: file.directedAt,
+          completedAt: file.completedAt || new Date(),
+        });
+      }
 
-    // ج) إنشاء سجل الإصدار الأول (pdf_versions - Version 1)
-    const [versionInsert] = await localDb.insert(pdfVersions).values({
-      archiveId,
-      fileId: file.id,
-      versionNumber: 1,
-      fileName: savedFile.fileName,
-      filePath: savedFile.relativePath,
-      mimeType: savedFile.mimeType,
-      fileSize: savedFile.fileSize,
-      fileHash: initialHash,
-      createdBy: actorName,
-      createdAt: new Date(),
-      reason: "النسخة الرسمية المعتمدة والموقعة عند الترحيل الأولي للأرشيف",
-      status: "ACTIVE",
-      isCurrent: true,
-    });
-    const versionId = (versionInsert as any)?.insertId;
+      // ب) نقل سجل حركات وتوجيهات المعاملة (file_history) من Cloud SQL إلى Local MySQL
+      // مع منع إدراج السجلات المكررة
+      const existingLocalHistory = await tx
+        .select()
+        .from(fileHistory)
+        .where(eq(fileHistory.fileId, file.id));
 
-    // د) تسجيل العملية في سجل التدقيق audit_logs
-    await localDb.insert(auditLogs).values({
-      archiveId,
-      fileId: file.id,
-      userId: options.userId || null,
-      username: actorName,
-      action: "ARCHIVE_TRANSFER",
-      tableName: "archives",
-      recordId: String(archiveId),
-      fieldName: "transfer_status",
-      oldValue: "COMPLETED",
-      newValue: "ARCHIVED",
-      deviceInfo: "Local Archive Ingestion Agent v1.0",
-    });
+      const existingHistorySignatures = new Set(
+        existingLocalHistory.map(
+          (h: any) => `${h.actionType}_${new Date(h.createdAt).getTime()}`
+        )
+      );
 
-    // هـ) تحديث سجل الترحيل archive_transfers واعتباره COMPLETED
-    if (transferId) {
-      await localDb
-        .update(archiveTransfers)
-        .set({
-          transferStatus: "COMPLETED",
+      for (const h of cloudHistory) {
+        const sig = `${h.actionType}_${new Date(h.createdAt).getTime()}`;
+        if (!existingHistorySignatures.has(sig)) {
+          await tx.insert(fileHistory).values({
+            fileId: file.id,
+            actorName: h.actorName,
+            actionType: h.actionType,
+            oldStatus: h.oldStatus,
+            newStatus: h.newStatus,
+            details: h.details,
+            createdAt: h.createdAt,
+          });
+          existingHistorySignatures.add(sig);
+        }
+      }
+
+      // ج) إنشاء أو استكمال سجل الأرشيف (archives) المستقل وغير المعتمد على cascade delete
+      if (archiveId) {
+        await tx
+          .update(archives)
+          .set({
+            fileNumber: file.fileNumber,
+            year: file.year,
+            sourceEntity: file.sourceEntity,
+            fileType: file.fileType,
+            subject: file.subject,
+            importance: file.importance,
+            status: "ARCHIVED",
+            currentPdfVersion: 1,
+            originalPdfVersion: 1,
+            originalPdfHash: expectedPdfHash,
+            currentPdfHash: expectedPdfHash,
+            notes: file.notes || null,
+            signedInstruction: file.signedInstruction || null,
+            directorInstruction: file.directorInstruction || null,
+            assignedDepartment: file.assignedDepartment || null,
+            assignedEmployee: file.assignedEmployee || null,
+            updatedAt: new Date(),
+          })
+          .where(eq(archives.id, archiveId));
+      } else {
+        const [archiveInsert] = await tx.insert(archives).values({
+          fileId: file.id,
+          fileNumber: file.fileNumber,
+          year: file.year,
+          sourceEntity: file.sourceEntity,
+          fileType: file.fileType,
+          subject: file.subject,
+          importance: file.importance,
+          archivedAt: new Date(),
+          archivedBy: actorName,
+          status: "ARCHIVED",
+          currentPdfVersion: 1,
+          originalPdfVersion: 1,
+          originalPdfHash: expectedPdfHash,
+          currentPdfHash: expectedPdfHash,
+          notes: file.notes || null,
+          signedInstruction: file.signedInstruction || null,
+          directorInstruction: file.directorInstruction || null,
+          assignedDepartment: file.assignedDepartment || null,
+          assignedEmployee: file.assignedEmployee || null,
+        });
+        archiveId = Number(
+          (archiveInsert as any)?.insertId || (archiveInsert as any)?.id || 0
+        );
+      }
+
+      // د) إنشاء أو استكمال سجل النسخة الأولى (pdf_versions - Version 1)
+      if (versionId) {
+        await tx
+          .update(pdfVersions)
+          .set({
+            archiveId,
+            fileId: file.id,
+            versionNumber: 1,
+            fileName: savedFile.fileName,
+            filePath: savedFile.relativePath,
+            mimeType: "application/pdf",
+            fileSize: savedFile.fileSize,
+            fileHash: expectedPdfHash,
+            status: "ACTIVE",
+            isCurrent: true,
+          })
+          .where(eq(pdfVersions.id, versionId));
+      } else {
+        const [versionInsert] = await tx.insert(pdfVersions).values({
           archiveId,
-          pdfHash: initialHash,
-          completedAt: new Date(),
-          errorMessage: null,
-        })
-        .where(eq(archiveTransfers.id, transferId));
+          fileId: file.id,
+          versionNumber: 1,
+          fileName: savedFile.fileName,
+          filePath: savedFile.relativePath,
+          mimeType: "application/pdf",
+          fileSize: savedFile.fileSize,
+          fileHash: expectedPdfHash,
+          createdBy: actorName,
+          createdAt: new Date(),
+          reason: "النسخة الرسمية المعتمدة والموقعة عند الترحيل الأولي للأرشيف",
+          status: "ACTIVE",
+          isCurrent: true,
+        });
+        versionId = Number(
+          (versionInsert as any)?.insertId || (versionInsert as any)?.id || 0
+        );
+      }
+
+      // هـ) تسجيل حركة التدقيق والمراجعة في audit_logs
+      await tx.insert(auditLogs).values({
+        archiveId,
+        fileId: file.id,
+        userId: options.userId || null,
+        username: actorName,
+        action: isRecovery ? "ARCHIVE_RECOVERY" : "ARCHIVE_TRANSFER",
+        tableName: "archives",
+        recordId: String(archiveId),
+        fieldName: "status",
+        oldValue: isRecovery ? "PARTIAL_RECOVERY" : "COMPLETED",
+        newValue: "ARCHIVED",
+        deviceInfo: "Local Archive Ingestion Agent v2.5",
+      });
+
+      // و) تحديث سجل الترحيل archive_transfers واعتباره COMPLETED
+      if (transferId) {
+        await tx
+          .update(archiveTransfers)
+          .set({
+            transferStatus: "COMPLETED",
+            archiveId,
+            pdfHash: expectedPdfHash,
+            completedAt: new Date(),
+            errorMessage: null,
+          })
+          .where(eq(archiveTransfers.id, transferId));
+      }
+    };
+
+    // تنفيذ الـ Transaction إذا كان localDb يدعم الدالة transaction
+    if (typeof localDb.transaction === "function") {
+      await localDb.transaction(executeInTransaction);
+    } else {
+      await executeInTransaction(localDb);
     }
 
     return {
@@ -493,13 +723,16 @@ export async function transferTransactionToLocalArchive(
       archiveId,
       versionId,
       pdfPath: savedFile.relativePath,
-      pdfHash: initialHash,
+      pdfHash: expectedPdfHash,
       attemptCount,
       transferId,
-      message: `تم ترحيل المعاملة (${file.fileNumber}) وحفظ الـ PDF الموقع في مجلد الأرشيف المحلي بنجاح تام وبإصدار Version 1`,
+      isRecovered: isRecovery,
+      message: isRecovery
+        ? `تم استكمال ترحيل وأرشفة المعاملة (${file.fileNumber}) واسترجاع النقص بنجاح (Recovery Completed).`
+        : `تم ترحيل المعاملة (${file.fileNumber}) وحفظ الـ PDF الموقع في مجلد الأرشيف المحلي بنجاح وبإصدار Version 1.`,
     };
-  } catch (dbErr: any) {
-    const errMsg = `فشل حفظ سجلات الأرشيف في قاعدة MySQL المحلية: ${dbErr?.message || "خطأ في قاعدة البيانات"}`;
+  } catch (txErr: any) {
+    const errMsg = `فشل تنفيذ معامَلة الأرشفة في Local MySQL (Rollback triggered): ${txErr?.message || "خطأ في قاعدة البيانات"}`;
     await recordTransferFailure(localDb, transferId, errMsg);
     return {
       success: false,
@@ -508,7 +741,7 @@ export async function transferTransactionToLocalArchive(
       fileNumber: file.fileNumber,
       attemptCount,
       message: errMsg,
-      error: dbErr?.message,
+      error: txErr?.message,
       isRetryable: true,
     };
   }
@@ -538,7 +771,7 @@ async function recordTransferFailure(
 }
 
 /**
- * الاستعلام عن حالة ترحيل معاملة معينة
+ * الاستعلام عن حالة ترحيل معاملة معينة مع فحص النزاهة الشامل
  */
 export async function getArchiveTransferStatus(
   fileId: number,
@@ -551,6 +784,7 @@ export async function getArchiveTransferStatus(
   errorMessage?: string | null;
   archiveId?: number | null;
   pdfHash?: string | null;
+  isPartial?: boolean;
 }> {
   const localDb = overrideLocalDb || getLocalDb();
   if (!localDb) {
@@ -563,21 +797,21 @@ export async function getArchiveTransferStatus(
   }
 
   try {
+    const file = await getIncomingFile(fileId);
+    if (!file) {
+      return {
+        isArchived: false,
+        status: "NOT_FOUND",
+        attemptCount: 0,
+        errorMessage: "المعاملة غير موجودة في Cloud SQL",
+      };
+    }
+
     const archiveRecord = await localDb
       .select()
       .from(archives)
       .where(eq(archives.fileId, fileId))
       .limit(1);
-
-    if (archiveRecord.length > 0) {
-      return {
-        isArchived: true,
-        status: "COMPLETED",
-        attemptCount: 1,
-        archiveId: archiveRecord[0].id,
-        pdfHash: archiveRecord[0].currentPdfHash,
-      };
-    }
 
     const transfer = await localDb
       .select()
@@ -586,15 +820,41 @@ export async function getArchiveTransferStatus(
       .orderBy(desc(archiveTransfers.id))
       .limit(1);
 
+    const versionRecord = await localDb
+      .select()
+      .from(pdfVersions)
+      .where(and(eq(pdfVersions.fileId, fileId), eq(pdfVersions.versionNumber, 1)))
+      .limit(1);
+
+    const hasArchive = archiveRecord.length > 0;
+    const hasVersion = versionRecord.length > 0;
+    const isCompleted = transfer[0]?.transferStatus === "COMPLETED";
+
+    // إذا وُجد الأرشيف ولكن ينقصه النسخة أو لم يكتمل
+    const isPartial = hasArchive && (!hasVersion || !isCompleted);
+
+    if (hasArchive && hasVersion && isCompleted) {
+      return {
+        isArchived: true,
+        status: "COMPLETED",
+        attemptCount: transfer[0]?.attemptCount || 1,
+        lastAttemptAt: transfer[0]?.lastAttemptAt,
+        archiveId: archiveRecord[0].id,
+        pdfHash: archiveRecord[0].currentPdfHash,
+        isPartial: false,
+      };
+    }
+
     if (transfer.length > 0) {
       return {
-        isArchived: transfer[0].transferStatus === "COMPLETED",
+        isArchived: false,
         status: transfer[0].transferStatus,
         attemptCount: transfer[0].attemptCount,
         lastAttemptAt: transfer[0].lastAttemptAt,
         errorMessage: transfer[0].errorMessage,
         archiveId: transfer[0].archiveId,
         pdfHash: transfer[0].pdfHash,
+        isPartial,
       };
     }
 
@@ -602,6 +862,7 @@ export async function getArchiveTransferStatus(
       isArchived: false,
       status: "NOT_TRANSFERRED",
       attemptCount: 0,
+      isPartial: false,
     };
   } catch (err: any) {
     return {

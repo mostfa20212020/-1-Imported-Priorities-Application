@@ -116,11 +116,13 @@ export const notifications = mysqlTable('notifications', {
 // =============================================================================
 export const archives = mysqlTable('archives', {
   id: int('id').autoincrement().primaryKey(),
-  fileId: int('file_id')
-    .notNull()
-    .unique()
-    .references(() => incomingFiles.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  fileId: int('file_id').notNull().unique(),
   fileNumber: varchar('file_number', { length: 255 }).notNull(),
+  year: int('year'),
+  sourceEntity: text('source_entity'),
+  fileType: varchar('file_type', { length: 255 }),
+  subject: text('subject'),
+  importance: varchar('importance', { length: 64 }),
   archivedAt: timestamp('archived_at').defaultNow().notNull(),
   archivedBy: varchar('archived_by', { length: 255 }).notNull(),
   status: varchar('status', { length: 64 }).default('ARCHIVED').notNull(),
@@ -129,6 +131,10 @@ export const archives = mysqlTable('archives', {
   originalPdfHash: varchar('original_pdf_hash', { length: 128 }),
   currentPdfHash: varchar('current_pdf_hash', { length: 128 }),
   notes: text('notes'),
+  signedInstruction: text('signed_instruction'),
+  directorInstruction: text('director_instruction'),
+  assignedDepartment: text('assigned_department'),
+  assignedEmployee: text('assigned_employee'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
 }, (table) => [
@@ -149,9 +155,7 @@ export const pdfVersions = mysqlTable('pdf_versions', {
   archiveId: int('archive_id')
     .notNull()
     .references(() => archives.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
-  fileId: int('file_id')
-    .notNull()
-    .references(() => incomingFiles.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  fileId: int('file_id').notNull(),
   versionNumber: int('version_number').notNull(),
   fileName: varchar('file_name', { length: 255 }).notNull(),
   filePath: text('file_path').notNull(),
@@ -203,16 +207,14 @@ export const auditLogs = mysqlTable('audit_logs', {
 // =============================================================================
 export const archiveTransfers = mysqlTable('archive_transfers', {
   id: int('id').autoincrement().primaryKey(),
-  fileId: int('file_id')
-    .notNull()
-    .references(() => incomingFiles.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  fileId: int('file_id').notNull(),
   archiveId: int('archive_id').references(() => archives.id, { onDelete: 'set null', onUpdate: 'cascade' }),
   transferStatus: varchar('transfer_status', { length: 64 }).default('PENDING').notNull(),
   startedAt: timestamp('started_at'),
   completedAt: timestamp('completed_at'),
   attemptCount: int('attempt_count').default(0).notNull(),
   errorMessage: text('error_message'),
-  sourceReference: varchar('source_reference', { length: 255 }).default('cloud_firestore').notNull(),
+  sourceReference: varchar('source_reference', { length: 255 }).default('cloud_sql_mysql').notNull(),
   destinationReference: varchar('destination_reference', { length: 255 }).default('local_mysql').notNull(),
   payloadHash: varchar('payload_hash', { length: 128 }),
   pdfHash: varchar('pdf_hash', { length: 128 }),
