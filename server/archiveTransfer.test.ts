@@ -47,6 +47,7 @@ class MockLocalDb {
   };
 
   failOnTransaction = false;
+  failOnTableInsert: string | null = null;
 
   select(selectFields?: any) {
     const self = this;
@@ -109,6 +110,9 @@ class MockLocalDb {
   insert(table: any) {
     const self = this;
     const tableName = resolveTable(table);
+    if (self.failOnTableInsert && self.failOnTableInsert === tableName) {
+      throw new Error(`Simulated database failure during insert into ${tableName}`);
+    }
     return {
       values(vals: any) {
         let insertedId = 0;
@@ -596,5 +600,149 @@ describe("Phase 3 Refinements: Transfer System, Recovery, Transactions & Integri
     // التأكد من عدم تكرار سجل الـ archives (يبقى 1 فقط)
     expect(mockLocalDb.archivesTable).toHaveLength(1);
     expect(mockLocalDb.pdfVersionsTable).toHaveLength(1);
+  });
+
+  it("الحالة 10 — [متطلب المستخدم 1] PDF يُحفظ بنجاح ثم تفشل MySQL: الاستئناف (Recovery) يكمل العملية دون إنشاء نسخة ثانية", async () => {
+    const fileNum = `TEST-PDF-THEN-FAIL-${Date.now()}`;
+    const created = await createIncomingFile({
+      fileNumber: fileNum,
+      year: 2026,
+      arrivalDate: new Date(),
+      sourceEntity: "المحكمة العليا - الدائرة الجزائية",
+      fileType: "وارد قضائي",
+      subject: "اختبار حفظ PDF أولاً ثم فشل قاعدة بيانات MySQL واستئناف العملية",
+      importance: "urgent",
+      status: "completed",
+      isSigned: true,
+    });
+
+    // 1. تفعيل انقطاع MySQL أثناء تنفيذ الـ Transaction
+    mockLocalDb.failOnTransaction = true;
+
+    // محاولة الترحيل الأولى: سيتم حفظ الـ PDF على القرص ثم يفشل الـ Transaction في MySQL
+    const firstAttempt = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+
+    // التحقق من فشل العملية الأولى برمز FAILED وقابليتها للإعادة
+    expect(firstAttempt.success).toBe(false);
+    expect(firstAttempt.status).toBe("FAILED");
+    expect(firstAttempt.isRetryable).toBe(true);
+
+    // التحقق من أن ملف الـ PDF تم حفظه بنجاح على القرص وبصمته سليمة تماماً
+    const { relativePath } = buildArchiveRelativePath(2026, fileNum, 1);
+    const diskContent = await readArchivePdf(relativePath);
+    expect(diskContent).toBeDefined();
+    expect(computePdfHash(diskContent)).toBe(computePdfHash(samplePdfBytes));
+
+    // التحقق من أن قاعدة MySQL لم يُسجل فيها أي بيانات بسبب الـ Rollback
+    expect(mockLocalDb.archivesTable).toHaveLength(0);
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(0);
+
+    // 2. إصلاح الاتصال بقاعدة MySQL ثم تشغيل الاستئناف (Recovery)
+    mockLocalDb.failOnTransaction = false;
+
+    const recoveryAttempt = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+
+    // التحقق من نجاح الاستئناف واكتمال المعاملة
+    expect(recoveryAttempt.success).toBe(true);
+    expect(recoveryAttempt.status).toBe("COMPLETED");
+
+    // التأكد من عدم إنشاء ملف أو نسخة ثانية: يجب أن تظل Version 1 فقط
+    expect(mockLocalDb.archivesTable).toHaveLength(1);
+    expect(mockLocalDb.archivesTable[0].fileNumber).toBe(fileNum);
+    expect(mockLocalDb.archivesTable[0].currentPdfVersion).toBe(1);
+
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(1);
+    expect(mockLocalDb.pdfVersionsTable[0].versionNumber).toBe(1);
+
+    // محاولة ثالثة بعد الاكتمال: يجب أن تعيد ALREADY_ARCHIVED فوراً دون تكرار أي سجل أو ملف
+    const thirdAttempt = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+    expect(thirdAttempt.success).toBe(true);
+    expect(thirdAttempt.status).toBe("ALREADY_ARCHIVED");
+    expect(mockLocalDb.archivesTable).toHaveLength(1);
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(1);
+  });
+
+  it("الحالة 11 — [متطلب المستخدم 2] MySQL Transaction تفشل في المنتصف قبل الإكمال: لا تعتبر العملية COMPLETED، ثم تنجح عند Retry", async () => {
+    const fileNum = `TEST-TX-PARTIAL-FAIL-${Date.now()}`;
+    const created = await createIncomingFile({
+      fileNumber: fileNum,
+      year: 2026,
+      arrivalDate: new Date(),
+      sourceEntity: "نيابة الأموال العامة المركزية",
+      fileType: "وارد تحقيقات",
+      subject: "اختبار فشل المعاملة في المنتصف وعدم اعتبارها مكتملة حتى تنجح بالكامل",
+      importance: "urgent",
+      status: "completed",
+      isSigned: true,
+    });
+
+    // إضافة حركات في السجل لترحيلها
+    await addFileHistory({
+      fileId: created.id,
+      actorName: "المحقق",
+      actionType: "إجراء تحقيق",
+      newStatus: "PENDING_AG",
+      details: "استكمال التحقيق وإحالة للتوقيع",
+    });
+
+    // 1. محاكاة فشل في منتصف الـ Transaction عند إدراج سجلات التدقيق audit_logs
+    mockLocalDb.failOnTableInsert = "audit_logs";
+
+    const partialFailAttempt = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+
+    // التحقق الصارم: لا تعتبر العملية COMPLETED مطلقاً
+    expect(partialFailAttempt.success).toBe(false);
+    expect(partialFailAttempt.status).toBe("FAILED");
+    expect(partialFailAttempt.status).not.toBe("COMPLETED");
+
+    // التحقق من تفعيل Rollback وعدم بقاء أي سجل نصف مكتمل في archives أو pdf_versions
+    expect(mockLocalDb.archivesTable).toHaveLength(0);
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(0);
+
+    // التحقق من أن حالة سجل الترحيل archive_transfers مسجلة FAILED وليست COMPLETED
+    const latestTransfer = mockLocalDb.archiveTransfersTable[mockLocalDb.archiveTransfersTable.length - 1];
+    expect(latestTransfer).toBeDefined();
+    expect(latestTransfer.transferStatus).toBe("FAILED");
+    expect(latestTransfer.transferStatus).not.toBe("COMPLETED");
+
+    // التحقق من دالة الاستعلام getArchiveTransferStatus بأن المعاملة غير مكتملة
+    const statusBeforeRetry = await getArchiveTransferStatus(created.id, mockLocalDb);
+    expect(statusBeforeRetry.isArchived).toBe(false);
+    expect(statusBeforeRetry.status).not.toBe("COMPLETED");
+
+    // 2. إزالة سبب الفشل وإعادة المحاولة (Retry)
+    mockLocalDb.failOnTableInsert = null;
+
+    const retryAttempt = await transferTransactionToLocalArchive(created.id, {
+      overrideLocalDb: mockLocalDb,
+      overridePdfBytes: samplePdfBytes,
+    });
+
+    // التحقق من نجاح المحاولة بالكامل
+    expect(retryAttempt.success).toBe(true);
+    expect(retryAttempt.status).toBe("COMPLETED");
+
+    // التحقق من اكتمال كافة الجداول بعد الـ Retry
+    expect(mockLocalDb.archivesTable).toHaveLength(1);
+    expect(mockLocalDb.pdfVersionsTable).toHaveLength(1);
+    expect(mockLocalDb.auditLogsTable).toHaveLength(1);
+    expect(mockLocalDb.fileHistoryTable).toHaveLength(1);
+
+    // التحقق من ترقية حالة الترحيل إلى COMPLETED
+    const statusAfterRetry = await getArchiveTransferStatus(created.id, mockLocalDb);
+    expect(statusAfterRetry.isArchived).toBe(true);
+    expect(statusAfterRetry.status).toBe("COMPLETED");
   });
 });

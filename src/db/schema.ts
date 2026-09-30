@@ -181,7 +181,7 @@ export const pdfVersions = mysqlTable('pdf_versions', {
 export const auditLogs = mysqlTable('audit_logs', {
   id: int('id').autoincrement().primaryKey(),
   archiveId: int('archive_id').references(() => archives.id, { onDelete: 'set null', onUpdate: 'cascade' }),
-  fileId: int('file_id').references(() => incomingFiles.id, { onDelete: 'set null', onUpdate: 'cascade' }),
+  fileId: int('file_id'),
   userId: int('user_id').references(() => users.id, { onDelete: 'set null', onUpdate: 'cascade' }),
   username: varchar('username', { length: 255 }),
   action: varchar('action', { length: 64 }).notNull(),

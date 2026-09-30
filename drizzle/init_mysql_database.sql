@@ -201,9 +201,6 @@ CREATE TABLE IF NOT EXISTS `audit_logs` (
   CONSTRAINT `audit_logs_archive_id_archives_id_fk`
     FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `audit_logs_file_id_incoming_files_id_fk`
-    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `audit_logs_user_id_users_id_fk`
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE
