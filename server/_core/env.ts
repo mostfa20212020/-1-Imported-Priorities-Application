@@ -13,5 +13,6 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: cleanEnv(process.env.BUILT_IN_FORGE_API_URL),
   forgeApiKey: cleanEnv(process.env.BUILT_IN_FORGE_API_KEY),
+  archiveRootPath: cleanEnv(process.env.ARCHIVE_ROOT_PATH) || "Archive",
 };
 

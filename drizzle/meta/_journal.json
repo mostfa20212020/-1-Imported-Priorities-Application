@@ -15,6 +15,13 @@
       "when": 1790794571448,
       "tag": "0001_blue_kat_farrell",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1790797870562,
+      "tag": "0002_flowery_bedlam",
+      "breakpoints": true
     }
   ]
 }
