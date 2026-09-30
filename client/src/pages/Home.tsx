@@ -2816,6 +2816,26 @@ function FileDetailsModal({
     onError: (error) => toast.error(error.message || "تعذر ترحيل المعاملة"),
   });
 
+  const archiveStatusQuery = trpc.files.archiveStatus.useQuery(
+    { fileId: fileData?.file.id || 0 },
+    { enabled: Boolean(fileData?.file.id) }
+  );
+
+  const archiveMutation = trpc.files.archiveTransaction.useMutation({
+    onSuccess: (data: any) => {
+      if (data.status === "ALREADY_ARCHIVED") {
+        toast.info(data.message);
+      } else if (data.success) {
+        toast.success(data.message);
+      } else {
+        toast.error(data.message);
+      }
+      archiveStatusQuery.refetch();
+      onChanged();
+    },
+    onError: (error) => toast.error(error.message || "تعذر ترحيل المعاملة إلى الأرشيف المحلي"),
+  });
+
   const adminUpdateMutation = trpc.files.adminUpdate.useMutation({
     onSuccess: () => {
       toast.success("تم حفظ كافة التعديلات في النظام بنجاح");
@@ -3437,6 +3457,85 @@ function FileDetailsModal({
                     )}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* بطاقة الترحيل إلى الأرشيف المحلي (Phase 3: Local MySQL & Storage Archive) */}
+            {(file.status === "COMPLETED" || file.status === "completed") && canDirect && (
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: "10px",
+                  padding: "16px",
+                  marginBottom: "16px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Archive size={18} color="#16a34a" />
+                    <strong style={{ fontSize: "14px", color: "#166534" }}>
+                      الأرشفة في MySQL المحلية (Local Archive Storage)
+                    </strong>
+                  </div>
+                  {archiveStatusQuery.data?.isArchived ? (
+                    <span
+                      style={{
+                        background: "#dcfce7",
+                        color: "#15803d",
+                        padding: "3px 10px",
+                        borderRadius: "12px",
+                        fontSize: "12px",
+                        fontWeight: "bold",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                    >
+                      <CheckCircle2 size={13} /> مؤرشفة محلياً (Version 1)
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        background: "#fef9c3",
+                        color: "#854d0e",
+                        padding: "3px 10px",
+                        borderRadius: "12px",
+                        fontSize: "12px",
+                      }}
+                    >
+                      بانتظار الترحيل للأرشيف
+                    </span>
+                  )}
+                </div>
+
+                <p style={{ fontSize: "12px", color: "#374151", margin: "0 0 12px 0", lineHeight: "1.6" }}>
+                  {archiveStatusQuery.data?.isArchived
+                    ? `تم ترحيل المعاملة وحفظ النسخة الموقعة رسمياً في مجلد الأرشيف المنظم، وتسجيل البصمة الرقمية (SHA-256) وسجل الإصدار الأول في قاعدة MySQL المحلية.`
+                    : `المعاملة مكتملة وموقعة إلكترونياً. يمكنك ترحيلها إلى قاعدة MySQL المحلية على جهاز الأرشيف وحفظ الـ PDF النهائي في مجلد الأرشيف المنظم.`}
+                </p>
+
+                {archiveStatusQuery.data?.pdfHash && (
+                  <div style={{ fontSize: "11px", color: "#4b5563", fontFamily: "monospace", background: "#ffffff", padding: "6px 10px", borderRadius: "6px", marginBottom: "12px", border: "1px solid #e5e7eb", direction: "ltr", textAlign: "left" }}>
+                    SHA-256: {archiveStatusQuery.data.pdfHash}
+                  </div>
+                )}
+
+                {!archiveStatusQuery.data?.isArchived && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ background: "#15803d", borderColor: "#166534" }}
+                    disabled={archiveMutation.isPending}
+                    onClick={() => archiveMutation.mutate({ fileId: file.id })}
+                  >
+                    {archiveMutation.isPending ? (
+                      <><RefreshCw size={15} className="spin" /> جاري الترحيل للأرشيف المحلي...</>
+                    ) : (
+                      <><Archive size={15} /> ترحيل إلى الأرشيف المحلي (Local MySQL)</>
+                    )}
+                  </button>
+                )}
               </div>
             )}
 

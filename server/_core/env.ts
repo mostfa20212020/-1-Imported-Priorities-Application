@@ -14,5 +14,11 @@ export const ENV = {
   forgeApiUrl: cleanEnv(process.env.BUILT_IN_FORGE_API_URL),
   forgeApiKey: cleanEnv(process.env.BUILT_IN_FORGE_API_KEY),
   archiveRootPath: cleanEnv(process.env.ARCHIVE_ROOT_PATH) || "Archive",
+  localMysqlHost: cleanEnv(process.env.LOCAL_MYSQL_HOST),
+  localMysqlPort: cleanEnv(process.env.LOCAL_MYSQL_PORT) ? Number(process.env.LOCAL_MYSQL_PORT) : 3306,
+  localMysqlUser: cleanEnv(process.env.LOCAL_MYSQL_USER),
+  localMysqlPassword: cleanEnv(process.env.LOCAL_MYSQL_PASSWORD),
+  localMysqlDatabase: cleanEnv(process.env.LOCAL_MYSQL_DATABASE),
+  localMysqlUrl: cleanEnv(process.env.LOCAL_MYSQL_URL),
 };
 

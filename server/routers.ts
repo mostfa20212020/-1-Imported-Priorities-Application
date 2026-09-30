@@ -14,6 +14,8 @@ import { clearLocalSession, createLocalSession } from "./_core/localAuth";
 import { getFileBytes, storageGetSignedUrl, storagePut } from "./storage";
 import { generateProsecutionPdf } from "./pdfService";
 import { checkMysqlDiagnostic } from "./diagnostics";
+import { transferTransactionToLocalArchive, getArchiveTransferStatus } from "./archiveTransfer";
+import { testLocalMysqlConnection } from "../src/db/localMysql";
 import {
   addFileHistory,
   createIncomingFile,
@@ -623,6 +625,36 @@ export const appRouter = router({
     clearDatabase: directorProcedure.mutation(async () => {
       await clearAllIncomingFiles();
       return { success: true, message: "تم تصفير قاعدة البيانات بنجاح" };
+    }),
+    archiveTransaction: protectedProcedure
+      .input(z.object({ fileId: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const role = ctx.user?.role;
+        if (role !== "admin" && role !== "director") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "غير مصرح لك بترحيل المعاملة إلى الأرشيف المحلي (مطلوب صلاحية مدير أو مشرف)",
+          });
+        }
+        return await transferTransactionToLocalArchive(input.fileId, {
+          actorName: actorName(ctx),
+          userId: ctx.user?.id,
+        });
+      }),
+    archiveStatus: protectedProcedure
+      .input(z.object({ fileId: z.number().int().positive() }))
+      .query(async ({ input }) => {
+        return await getArchiveTransferStatus(input.fileId);
+      }),
+    testLocalMysql: protectedProcedure.query(async ({ ctx }) => {
+      const role = ctx.user?.role;
+      if (role !== "admin" && role !== "director") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "غير مصرح لك بفحص اتصال قاعدة بيانات الأرشيف المحلي",
+        });
+      }
+      return await testLocalMysqlConnection();
     }),
   }),
   notifications: router({
