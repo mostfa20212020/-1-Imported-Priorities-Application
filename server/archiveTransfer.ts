@@ -152,7 +152,8 @@ export async function checkArchiveIntegrity(
   } catch {
     // optional
   }
-  if (fileHistoryCount === 0) {
+  const cloudHistory = await getFileHistory(file.id);
+  if (cloudHistory.length > 0 && fileHistoryCount === 0) {
     missingParts.push("file_history_missing");
   }
 
