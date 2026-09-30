@@ -1,6 +1,6 @@
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, like, or } from "drizzle-orm";
 import { randomBytes, scryptSync } from "node:crypto";
-import { QueryResult, QueryResultRow } from "pg";
+import type { FieldPacket, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { ENV } from "./_core/env";
 import { db, pool } from "../src/db/index.ts";
 import {
@@ -16,31 +16,31 @@ import {
   users,
 } from "../src/db/schema.ts";
 
-// Re-export initialized Drizzle ORM and pg.Pool instance
+// Re-export initialized Drizzle ORM and mysql2 pool instance
 export { db, pool };
 
 /**
- * Direct query handler using 'pg' pool for raw SQL execution
- * Initializes and executes parameterized SQL queries directly on PostgreSQL
+ * Direct query handler using 'mysql2' pool for raw SQL execution
+ * Initializes and executes parameterized SQL queries directly on MySQL
  * using credentials from .env (SQL_HOST, SQL_PORT, SQL_USER, SQL_PASSWORD, SQL_DB_NAME, DATABASE_URL)
  *
- * @param text The SQL query string (e.g. 'SELECT * FROM users WHERE id = $1')
+ * @param text The SQL query string (e.g. 'SELECT * FROM users WHERE id = ?')
  * @param params Optional parameterized values to prevent SQL injection
  */
-export async function query<R extends QueryResultRow = any>(
+export async function query<R extends RowDataPacket[] | ResultSetHeader = any>(
   text: string,
   params?: any[]
-): Promise<QueryResult<R>> {
+): Promise<[R, FieldPacket[]]> {
   const start = Date.now();
   try {
     const res = await pool.query<R>(text, params);
     const duration = Date.now() - start;
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[PostgreSQL] Query executed in ${duration}ms | rows: ${res.rowCount}`);
+      console.log(`[MySQL] Query executed in ${duration}ms`);
     }
     return res;
   } catch (err: any) {
-    console.error(`[PostgreSQL Query Error]: "${text}"`, err);
+    console.error(`[MySQL Query Error]: "${text}"`, err);
     throw err;
   }
 }
@@ -331,7 +331,7 @@ const inMemoryNotifications: Notification[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Database Operations (PostgreSQL via Cloud SQL Drizzle ORM)
+// Database Operations (MySQL via Drizzle ORM)
 // ---------------------------------------------------------------------------
 
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -365,8 +365,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       await database
         .insert(users)
         .values(values)
-        .onConflictDoUpdate({
-          target: users.openId,
+        .onDuplicateKeyUpdate({
           set: updateSet,
         });
       return;
@@ -420,7 +419,7 @@ export async function getUserByUsername(username: string) {
   try {
     const database = await getDb();
     if (database) {
-      const result = await database.select().from(users).where(ilike(users.username, norm)).limit(1);
+      const result = await database.select().from(users).where(like(users.username, norm)).limit(1);
       if (result[0]) return result[0];
     }
   } catch (err) {
@@ -474,8 +473,12 @@ export async function createLocalUser(values: InsertUser) {
   try {
     const database = await getDb();
     if (database) {
-      const [created] = await database.insert(users).values(values).returning();
-      if (created) return created;
+      const [result] = await database.insert(users).values(values);
+      const insertedId = (result as any)?.insertId;
+      if (insertedId) {
+        const [created] = await database.select().from(users).where(eq(users.id, Number(insertedId))).limit(1);
+        if (created) return created;
+      }
     }
   } catch (err) {
     console.warn("[Database] createLocalUser fallback to memory:", err);
@@ -503,11 +506,11 @@ export async function updateLocalUser(id: number, values: Partial<InsertUser>) {
   try {
     const database = await getDb();
     if (database) {
-      const [updated] = await database
+      await database
         .update(users)
         .set({ ...values, updatedAt: new Date() })
-        .where(eq(users.id, id))
-        .returning();
+        .where(eq(users.id, id));
+      const [updated] = await database.select().from(users).where(eq(users.id, id)).limit(1);
       if (updated) return updated;
     }
   } catch (err) {
@@ -685,16 +688,16 @@ export async function listIncomingFiles(filters: {
       if (filters.status) conditions.push(eq(incomingFiles.status, filters.status));
       if (filters.importance) conditions.push(eq(incomingFiles.importance, filters.importance));
       if (filters.fileType) conditions.push(eq(incomingFiles.fileType, filters.fileType));
-      if (filters.sourceEntity) conditions.push(ilike(incomingFiles.sourceEntity, `%${filters.sourceEntity}%`));
+      if (filters.sourceEntity) conditions.push(like(incomingFiles.sourceEntity, `%${filters.sourceEntity}%`));
       if (filters.search) {
         const query = `%${filters.search}%`;
         conditions.push(
           or(
-            ilike(incomingFiles.fileNumber, query),
-            ilike(incomingFiles.subject, query),
-            ilike(incomingFiles.sourceEntity, query),
-            ilike(incomingFiles.assignedDepartment, query),
-            ilike(incomingFiles.assignedEmployee, query),
+            like(incomingFiles.fileNumber, query),
+            like(incomingFiles.subject, query),
+            like(incomingFiles.sourceEntity, query),
+            like(incomingFiles.assignedDepartment, query),
+            like(incomingFiles.assignedEmployee, query),
           ),
         );
       }
@@ -788,9 +791,9 @@ export async function getFileStats() {
 
       return {
         ...result,
-        dbEngine: "PostgreSQL (Cloud SQL) / Drizzle ORM",
+        dbEngine: "MySQL / Drizzle ORM",
         isConnectedToExternalDb: true,
-        source: "قاعدة بيانات سحابية علائقية (Cloud SQL - PostgreSQL)",
+        source: "قاعدة بيانات سحابية علائقية (MySQL)",
         lastSyncedAt: new Date().toISOString(),
       };
     }
@@ -807,9 +810,9 @@ export async function getFileStats() {
     completed: 0,
     urgent: 0,
     byType: {} as Record<string, number>,
-    dbEngine: "Drizzle Schema / In-Memory SQL Store",
+    dbEngine: "MySQL Drizzle Schema / In-Memory SQL Store",
     isConnectedToExternalDb: false,
-    source: "قاعدة بيانات النظام المدمجة",
+    source: "قاعدة بيانات النظام المدمجة (MySQL Compatible)",
     lastSyncedAt: new Date().toISOString(),
   };
   for (const f of inMemoryFiles) {
@@ -861,8 +864,12 @@ export async function createIncomingFile(values: InsertIncomingFile) {
   try {
     const database = await getDb();
     if (database) {
-      const [created] = await database.insert(incomingFiles).values(values).returning();
-      if (created) return created;
+      const [result] = await database.insert(incomingFiles).values(values);
+      const insertedId = (result as any)?.insertId;
+      if (insertedId) {
+        const [created] = await database.select().from(incomingFiles).where(eq(incomingFiles.id, Number(insertedId))).limit(1);
+        if (created) return created;
+      }
     }
   } catch (err) {
     console.warn("[Database] createIncomingFile fallback to memory:", err);
@@ -909,11 +916,11 @@ export async function updateIncomingFile(id: number, values: Partial<InsertIncom
   try {
     const database = await getDb();
     if (database) {
-      const [updated] = await database
+      await database
         .update(incomingFiles)
         .set({ ...values, updatedAt: new Date() })
-        .where(eq(incomingFiles.id, id))
-        .returning();
+        .where(eq(incomingFiles.id, id));
+      const [updated] = await database.select().from(incomingFiles).where(eq(incomingFiles.id, id)).limit(1);
       if (updated) return updated;
     }
   } catch (err) {

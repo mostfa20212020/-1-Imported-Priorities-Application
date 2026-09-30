@@ -6,8 +6,8 @@ dotenv.config();
 
 const sqlHost = process.env.SQL_HOST;
 const sqlDbName = process.env.SQL_DB_NAME;
-const user = process.env.SQL_ADMIN_USER;
-const password = process.env.SQL_ADMIN_PASSWORD;
+const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER;
+const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD;
 
 if (!sqlHost) {
   throw new Error("SQL_HOST must be set in environment variables.");
@@ -21,19 +21,18 @@ if (!user) {
 if (!password) {
   throw new Error("SQL_ADMIN_PASSWORD must be set in environment variables.");
 }
-console.log(`Using user: ${user} to connect to database.`);
+console.log(`Using user: ${user} to connect to MySQL database.`);
 
 export default defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
-  dialect: "postgresql",
-  schemaFilter: ["public"],
+  dialect: "mysql",
   dbCredentials: {
     host: sqlHost,
+    port: process.env.SQL_PORT && !isNaN(Number(process.env.SQL_PORT)) ? Number(process.env.SQL_PORT) : 3306,
     user: user,
     password: password,
     database: sqlDbName,
-    ssl: false,
   },
   verbose: true,
 });

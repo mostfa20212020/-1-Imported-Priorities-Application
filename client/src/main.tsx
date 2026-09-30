@@ -99,11 +99,11 @@ function handleCategorizedError(error: unknown) {
   // 1. Specific Database connection failure detection
   const isDbError =
     lower.includes("database") ||
-    lower.includes("postgres") ||
+    lower.includes("mysql") ||
     lower.includes("econnrefused") ||
     lower.includes("connection terminated") ||
-    lower.includes("password authentication failed") ||
-    lower.includes("supabase") ||
+    lower.includes("access denied for user") ||
+    lower.includes("er_") ||
     lower.includes("query error") ||
     lower.includes("pool error") ||
     msg.includes("قاعدة البيانات");

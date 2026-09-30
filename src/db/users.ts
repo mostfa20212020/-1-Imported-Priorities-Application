@@ -4,22 +4,21 @@ import { eq } from 'drizzle-orm';
 
 export async function getOrCreateUser(uid: string, email: string) {
   try {
-    const result = await db
+    await db
       .insert(users)
       .values({
         uid,
         email,
         openId: uid,
       })
-      .onConflictDoUpdate({
-        target: users.uid,
+      .onDuplicateKeyUpdate({
         set: {
           email,
         },
-      })
-      .returning();
+      });
 
-    return result[0];
+    const [user] = await db.select().from(users).where(eq(users.uid, uid)).limit(1);
+    return user;
   } catch (error) {
     console.error("Failed to get or create user:", error);
     throw new Error("Database query failed. Please try again later.", { cause: error });
