@@ -5,16 +5,56 @@ import { ENV } from "./_core/env";
 import { db, pool } from "../src/db/index.ts";
 import {
   fileHistory,
+  type FileHistory,
+  type IncomingFile,
+  incomingFiles,
+  type InsertIncomingFile,
+  type Notification,
+  notifications,
+  type InsertUser,
+  type User,
+  users,
+  archives,
+  type Archive,
+  type InsertArchive,
+  pdfVersions,
+  type PdfVersion,
+  type InsertPdfVersion,
+  auditLogs,
+  type AuditLog,
+  type InsertAuditLog,
+  archiveTransfers,
+  type ArchiveTransfer,
+  type InsertArchiveTransfer,
+} from "../src/db/schema.ts";
+
+export {
+  fileHistory,
+  incomingFiles,
+  notifications,
+  users,
+  archives,
+  pdfVersions,
+  auditLogs,
+  archiveTransfers,
+};
+
+export type {
   FileHistory,
   IncomingFile,
-  incomingFiles,
   InsertIncomingFile,
   Notification,
-  notifications,
   InsertUser,
   User,
-  users,
-} from "../src/db/schema.ts";
+  Archive,
+  InsertArchive,
+  PdfVersion,
+  InsertPdfVersion,
+  AuditLog,
+  InsertAuditLog,
+  ArchiveTransfer,
+  InsertArchiveTransfer,
+};
 
 // Re-export initialized Drizzle ORM and mysql2 pool instance
 export { db, pool };
