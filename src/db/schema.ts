@@ -13,7 +13,7 @@ export const users = mysqlTable('users', {
   loginMethod: varchar('login_method', { length: 64 }),
   role: varchar('role', { length: 64 }).default('user').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp('last_signed_in').defaultNow().notNull(),
 });
 
@@ -46,18 +46,21 @@ export const incomingFiles = mysqlTable('incoming_files', {
   registeredBy: text('registered_by'),
   currentResponsible: text('current_responsible'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
   directedAt: timestamp('directed_at'),
   completedAt: timestamp('completed_at'),
 }, (table) => [
   index('incoming_files_status_idx').on(table.status),
   index('incoming_files_importance_idx').on(table.importance),
   index('incoming_files_arrival_idx').on(table.arrivalDate),
+  index('incoming_files_file_number_idx').on(table.fileNumber),
 ]);
 
 export const fileHistory = mysqlTable('file_history', {
   id: int('id').autoincrement().primaryKey(),
-  fileId: int('file_id').notNull(),
+  fileId: int('file_id')
+    .notNull()
+    .references(() => incomingFiles.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
   actorName: text('actor_name').notNull(),
   actionType: text('action_type').notNull(),
   oldStatus: varchar('old_status', { length: 64 }),
@@ -72,7 +75,7 @@ export const notifications = mysqlTable('notifications', {
   id: int('id').autoincrement().primaryKey(),
   recipientOpenId: varchar('recipient_open_id', { length: 255 }),
   recipientRole: varchar('recipient_role', { length: 64 }).default('director').notNull(),
-  fileId: int('file_id'),
+  fileId: int('file_id').references(() => incomingFiles.id, { onDelete: 'set null', onUpdate: 'cascade' }),
   kind: varchar('kind', { length: 128 }).notNull(),
   priority: varchar('priority', { length: 64 }).default('normal').notNull(),
   title: text('title').notNull(),
@@ -82,6 +85,7 @@ export const notifications = mysqlTable('notifications', {
 }, (table) => [
   index('notifications_recipient_idx').on(table.recipientOpenId),
   index('notifications_read_idx').on(table.readAt),
+  index('notifications_file_id_idx').on(table.fileId),
 ]);
 
 export const fileHistoryRelations = relations(fileHistory, ({ one }) => ({
@@ -93,6 +97,21 @@ export const fileHistoryRelations = relations(fileHistory, ({ one }) => ({
 
 export const incomingFilesRelations = relations(incomingFiles, ({ many }) => ({
   history: many(fileHistory),
+  notifications: many(notifications),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  file: one(incomingFiles, {
+    fields: [notifications.fileId],
+    references: [incomingFiles.id],
+  }),
+  recipient: one(users, {
+    fields: [notifications.recipientOpenId],
+    references: [users.openId],
+  }),
+}));
+
+export const usersRelations = relations(users, ({ many }) => ({
   notifications: many(notifications),
 }));
 

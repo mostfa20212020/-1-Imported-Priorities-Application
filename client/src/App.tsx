@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { OfflineSyncBanner } from "./components/OfflineSyncBanner";
+import { OfflineSyncIndicator } from "./components/OfflineSyncIndicator";
 import Home from "./pages/Home";
 
 function Router() {
@@ -25,6 +26,7 @@ export default function App() {
           <Toaster position="top-center" richColors dir="rtl" />
           <OfflineSyncBanner />
           <Router />
+          <OfflineSyncIndicator variant="floating" />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

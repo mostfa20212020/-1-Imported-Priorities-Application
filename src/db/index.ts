@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
+import fs from 'node:fs';
 import * as schema from './schema.ts';
 
 // Add global connection pool caching to persist across hot-reloads
@@ -16,7 +17,20 @@ export const createPool = () => {
       (rawDbUrl!.startsWith('mysql://') || rawDbUrl!.startsWith('mysql2://'));
 
     const rawHost = process.env.MYSQL_HOST || process.env.SQL_HOST;
-    const isUnixSocket = rawHost && rawHost.startsWith('/') && !rawHost.includes('PGSQL');
+    const isCloudSqlDir = Boolean(rawHost && (rawHost.includes('cloudsql') || rawHost.includes('PGSQL')));
+    const isUnixSocket = Boolean(
+      rawHost &&
+      rawHost.startsWith('/') &&
+      !isCloudSqlDir &&
+      fs.existsSync(rawHost) &&
+      (() => {
+        try {
+          return fs.statSync(rawHost).isSocket();
+        } catch {
+          return false;
+        }
+      })()
+    );
 
     const poolConfig: mysql.PoolOptions = hasValidDatabaseUrl
       ? {

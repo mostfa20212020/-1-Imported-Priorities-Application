@@ -1,1 +1,1 @@
-import {} from "./schema";
+export * from "../src/db/schema";

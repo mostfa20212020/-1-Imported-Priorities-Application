@@ -16,6 +16,7 @@ import { getFileBytes, storagePut } from "../storage";
 import { generateProsecutionPdf, ensureDefaultPdfs } from "../pdfService";
 import { requireAuth, AuthRequest } from "../../src/middleware/auth.ts";
 import { getUsers } from "../../src/db/users.ts";
+import { checkMysqlDiagnostic } from "../diagnostics";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -198,6 +199,23 @@ async function startServer() {
     } catch (error: any) {
       console.error("Failed to fetch users:", error);
       res.status(500).json({ error: error.message || "Failed to fetch users" });
+    }
+  });
+
+  // Diagnostic endpoint that checks MySQL database connectivity and provides a status report
+  app.get(["/api/diagnostics/mysql", "/api/diagnostics/db"], async (_req, res) => {
+    try {
+      const report = await checkMysqlDiagnostic();
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.status(200).json(report);
+    } catch (err: any) {
+      res.status(500).json({
+        connected: false,
+        status: "error",
+        error: { message: err?.message || "Diagnostic execution failed" },
+        timestamp: new Date().toISOString(),
+      });
     }
   });
 

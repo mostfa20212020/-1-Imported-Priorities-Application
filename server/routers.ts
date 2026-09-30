@@ -13,6 +13,7 @@ import { ENV } from "./_core/env";
 import { clearLocalSession, createLocalSession } from "./_core/localAuth";
 import { getFileBytes, storageGetSignedUrl, storagePut } from "./storage";
 import { generateProsecutionPdf } from "./pdfService";
+import { checkMysqlDiagnostic } from "./diagnostics";
 import {
   addFileHistory,
   createIncomingFile,
@@ -184,24 +185,17 @@ export async function addSignatureStamp(
 export const appRouter = router({
   system: systemRouter,
   dbStatus: publicProcedure.query(async () => {
-    let isConnected = false;
-    let mode = "Memory / Local";
-    try {
-      const db = await import("./db").then(m => m.getDb());
-      if (db) {
-        isConnected = true;
-        mode = "MySQL Local (Active)";
-      }
-    } catch {
-      isConnected = false;
-      mode = "Fallback Mode";
-    }
+    const diagnostic = await checkMysqlDiagnostic();
     return {
-      connected: isConnected,
-      mode,
-      lastSync: new Date().toISOString(),
-      serverHost: process.env.DATABASE_URL ? "Custom MySQL Configured" : "Default Local Store",
+      connected: diagnostic.connected,
+      mode: diagnostic.connected ? "MySQL Local (Active)" : "Fallback Mode (In-Memory)",
+      lastSync: diagnostic.timestamp,
+      serverHost: diagnostic.config.host,
+      diagnostic,
     };
+  }),
+  dbDiagnostic: publicProcedure.query(async () => {
+    return await checkMysqlDiagnostic();
   }),
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user ? publicUser(opts.ctx.user) : null),

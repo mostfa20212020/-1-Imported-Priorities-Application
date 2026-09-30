@@ -45,8 +45,51 @@ export async function query<R extends RowDataPacket[] | ResultSetHeader = any>(
   }
 }
 
+let cachedDbOnline: boolean | null = null;
+let lastDbCheckTime = 0;
+const DB_CHECK_INTERVAL_MS = 15000;
+
+export async function isDbOnline(): Promise<boolean> {
+  const now = Date.now();
+  if (cachedDbOnline !== null && now - lastDbCheckTime < DB_CHECK_INTERVAL_MS) {
+    return cachedDbOnline;
+  }
+
+  lastDbCheckTime = now;
+  try {
+    const pingPromise = pool.query("SELECT 1 AS ping");
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DB ping timeout")), 1200)
+    );
+    await Promise.race([pingPromise, timeoutPromise]);
+    cachedDbOnline = true;
+    return true;
+  } catch {
+    cachedDbOnline = false;
+    return false;
+  }
+}
+
+export function setDbOffline() {
+  cachedDbOnline = false;
+  lastDbCheckTime = Date.now();
+}
+
+export function setDbOnline() {
+  cachedDbOnline = true;
+  lastDbCheckTime = Date.now();
+}
+
+export function handleQueryError(context: string, err: any) {
+  setDbOffline();
+  if (process.env.DEBUG_DB === "true") {
+    console.warn(`[Database] ${context} fallback to memory:`, err?.message || err);
+  }
+}
+
 export async function getDb() {
-  if (process.env.SQL_HOST || process.env.SQL_USER || process.env.DATABASE_URL) {
+  const online = await isDbOnline();
+  if (online) {
     return db;
   }
   return null;
@@ -371,7 +414,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       return;
     }
   } catch (err) {
-    console.warn("[Database] upsertUser fallback to memory:", err);
+    handleQueryError("upsertUser", err);
   }
 
   const existing = inMemoryUsers.find((u) => u.openId === user.openId);
@@ -409,7 +452,7 @@ export async function getUserByOpenId(openId: string) {
       if (result[0]) return result[0];
     }
   } catch (err) {
-    console.warn("[Database] getUserByOpenId fallback to memory:", err);
+    handleQueryError("getUserByOpenId", err);
   }
   return inMemoryUsers.find((u) => u.openId === openId);
 }
@@ -423,7 +466,7 @@ export async function getUserByUsername(username: string) {
       if (result[0]) return result[0];
     }
   } catch (err) {
-    console.warn("[Database] getUserByUsername fallback to memory:", err);
+    handleQueryError("getUserByUsername", err);
   }
   return inMemoryUsers.find((u) => u.username?.toLowerCase() === norm);
 }
@@ -450,7 +493,7 @@ export async function listUsers() {
         .orderBy(desc(users.createdAt));
     }
   } catch (err) {
-    console.warn("[Database] listUsers fallback to memory:", err);
+    handleQueryError("listUsers", err);
   }
   return [...inMemoryUsers]
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
@@ -481,7 +524,7 @@ export async function createLocalUser(values: InsertUser) {
       }
     }
   } catch (err) {
-    console.warn("[Database] createLocalUser fallback to memory:", err);
+    handleQueryError("createLocalUser", err);
   }
   const newUser: User = {
     id: inMemoryUserIdCounter++,
@@ -514,7 +557,7 @@ export async function updateLocalUser(id: number, values: Partial<InsertUser>) {
       if (updated) return updated;
     }
   } catch (err) {
-    console.warn("[Database] updateLocalUser fallback to memory:", err);
+    handleQueryError("updateLocalUser", err);
   }
   const target = inMemoryUsers.find((u) => u.id === id);
   if (!target) return undefined;
@@ -536,7 +579,7 @@ export async function deleteLocalUser(id: number): Promise<boolean> {
       return true;
     }
   } catch (err) {
-    console.warn("[Database] deleteLocalUser fallback to memory:", err);
+    handleQueryError("deleteLocalUser", err);
   }
   const idx = inMemoryUsers.findIndex((u) => u.id === id);
   if (idx !== -1) {
@@ -592,7 +635,7 @@ export async function updateJobTitle(oldTitle: string, newTitle: string): Promis
       await database.update(users).set({ jobTitle: nTrimmed, updatedAt: new Date() }).where(eq(users.jobTitle, oTrimmed));
     }
   } catch (err) {
-    console.warn("[Database] updateJobTitle users fallback to memory:", err);
+    handleQueryError("updateJobTitle users", err);
   }
 
   for (const user of inMemoryUsers) {
@@ -709,7 +752,7 @@ export async function listIncomingFiles(filters: {
         .limit(200);
     }
   } catch (err) {
-    console.warn("[Database] listIncomingFiles fallback to memory:", err);
+    handleQueryError("listIncomingFiles", err);
   }
 
   let result = [...inMemoryFiles];
@@ -748,7 +791,7 @@ export async function getIncomingFile(id: number) {
       if (result[0]) return result[0];
     }
   } catch (err) {
-    console.warn("[Database] getIncomingFile fallback to memory:", err);
+    handleQueryError("getIncomingFile", err);
   }
   return inMemoryFiles.find((f) => f.id === id);
 }
@@ -760,7 +803,7 @@ export async function getFileHistory(fileId: number) {
       return await database.select().from(fileHistory).where(eq(fileHistory.fileId, fileId)).orderBy(desc(fileHistory.createdAt));
     }
   } catch (err) {
-    console.warn("[Database] getFileHistory fallback to memory:", err);
+    handleQueryError("getFileHistory", err);
   }
   return inMemoryHistory
     .filter((h) => h.fileId === fileId)
@@ -798,7 +841,7 @@ export async function getFileStats() {
       };
     }
   } catch (err) {
-    console.warn("[Database] getFileStats fallback to memory:", err);
+    handleQueryError("getFileStats", err);
   }
 
   const stats = {
@@ -844,7 +887,7 @@ export async function getNextIncomingFileNumber(): Promise<{ nextNumber: number;
       return { nextNumber, formatted: String(nextNumber) };
     }
   } catch (err) {
-    console.warn("[Database] getNextIncomingFileNumber fallback to memory:", err);
+    handleQueryError("getNextIncomingFileNumber", err);
   }
 
   let maxNum = 0;
@@ -872,7 +915,7 @@ export async function createIncomingFile(values: InsertIncomingFile) {
       }
     }
   } catch (err) {
-    console.warn("[Database] createIncomingFile fallback to memory:", err);
+    handleQueryError("createIncomingFile", err);
   }
 
   const newFile: IncomingFile = {
@@ -924,7 +967,7 @@ export async function updateIncomingFile(id: number, values: Partial<InsertIncom
       if (updated) return updated;
     }
   } catch (err) {
-    console.warn("[Database] updateIncomingFile fallback to memory:", err);
+    handleQueryError("updateIncomingFile", err);
   }
 
   const target = inMemoryFiles.find((f) => f.id === id);
@@ -943,7 +986,7 @@ export async function deleteIncomingFile(id: number) {
       return true;
     }
   } catch (err) {
-    console.warn("[Database] deleteIncomingFile fallback to memory:", err);
+    handleQueryError("deleteIncomingFile", err);
   }
 
   const idx = inMemoryFiles.findIndex((f) => f.id === id);
@@ -970,7 +1013,7 @@ export async function clearAllIncomingFiles() {
       return true;
     }
   } catch (err) {
-    console.warn("[Database] clearAllIncomingFiles fallback to memory:", err);
+    handleQueryError("clearAllIncomingFiles", err);
   }
 
   inMemoryFiles.length = 0;
@@ -988,7 +1031,7 @@ export async function addFileHistory(values: typeof fileHistory.$inferInsert) {
       return;
     }
   } catch (err) {
-    console.warn("[Database] addFileHistory fallback to memory:", err);
+    handleQueryError("addFileHistory", err);
   }
 
   const newHistory: FileHistory = {
@@ -1012,7 +1055,7 @@ export async function createNotification(values: typeof notifications.$inferInse
       return;
     }
   } catch (err) {
-    console.warn("[Database] createNotification fallback to memory:", err);
+    handleQueryError("createNotification", err);
   }
 
   const newNotif: Notification = {
@@ -1042,7 +1085,7 @@ export async function listNotifications(recipientOpenId: string) {
         .limit(50);
     }
   } catch (err) {
-    console.warn("[Database] listNotifications fallback to memory:", err);
+    handleQueryError("listNotifications", err);
   }
 
   return inMemoryNotifications
@@ -1058,7 +1101,7 @@ export async function markNotificationRead(id: number) {
       return;
     }
   } catch (err) {
-    console.warn("[Database] markNotificationRead fallback to memory:", err);
+    handleQueryError("markNotificationRead", err);
   }
 
   const notif = inMemoryNotifications.find((n) => n.id === id);

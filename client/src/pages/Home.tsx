@@ -77,6 +77,8 @@ import { ServerConnectionModal } from "@/components/ServerConnectionModal";
 import { GoogleServicesConfigCard } from "@/components/GoogleServicesConfigCard";
 import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { OfflineSyncCompactBadge } from "@/components/OfflineSyncBanner";
+import { OfflineSyncCard } from "@/components/OfflineSyncIndicator";
+import { exportPrioritiesToCsv } from "@/utils/exportCsv";
 import { queueOfflineMutation, requestBackgroundSync } from "@/lib/offlineSync";
 import { getServerUrl, isAndroidApk } from "@/lib/serverConfig";
 import { WorkflowProgressChart } from "@/components/WorkflowProgressChart";
@@ -627,6 +629,12 @@ export default function Home() {
             </div>
           )}
 
+          {activeView === "dashboard" && canViewDashboard && (
+            <div style={{ marginBottom: "16px" }}>
+              <OfflineSyncCard />
+            </div>
+          )}
+
           <SystemResetModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} onSuccess={() => selectView("register")} />
           <ServerConnectionModal isOpen={isServerModalOpen} onClose={() => setIsServerModalOpen(false)} />
 
@@ -764,7 +772,7 @@ function DirectorQuickFilters({ files, search, status, importance, fileType, sou
   const rows = files.map((file) => [file.fileNumber, file.year, formatDate(file.arrivalDate), file.sourceEntity, file.subject, importanceLabels[file.importance], statusLabels[file.status], file.currentResponsible || ""]);
   const exportExcel = () => { const header = ["رقم الملف", "السنة", "تاريخ الإضافة", "جهة الورود", "الموضوع", "الأولوية", "الحالة", "المسؤول"]; const csv = [header, ...rows].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); const blob = new Blob(["\ufeff" + csv], { type: "application/vnd.ms-excel;charset=utf-8" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "ملفات-رئيس-النيابة.xls"; link.click(); URL.revokeObjectURL(link.href); toast.success("تم تصدير القائمة بصيغة Excel"); };
   const exportPdf = () => { const printable = window.open("", "_blank", "noopener,noreferrer"); if (!printable) { toast.error("اسمح بالنوافذ المنبثقة لتصدير PDF"); return; } const serial = `PP-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}`; const issueDate = new Intl.DateTimeFormat("ar-YE", { dateStyle: "full", timeStyle: "short" }).format(new Date()); const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>\"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[char] || char)); printable.document.write(`<html dir="rtl"><head><title>ملفات النيابة العامة - ${serial}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#173f4d}h1{font-size:22px;margin-bottom:8px}.meta{font-size:12px;color:#56716f;margin-bottom:18px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #b8c9c6;padding:7px;text-align:right}th{background:#e5f1ed}.signature{margin-top:45px;border-top:1px solid #8ca8a2;padding-top:18px;display:flex;justify-content:space-between;min-height:105px;font-size:12px}.signature-box{width:42%;text-align:center}.line{border-bottom:1px solid #557773;height:42px;margin:0 18px 8px}.stamp{border:1px dashed #7c9c96;border-radius:50%;width:78px;height:50px;margin:-3px auto 0;padding-top:24px;color:#6c8c85;font-size:10px}</style></head><body><h1>قائمة ملفات النيابة العامة</h1><div class="meta">الرقم التسلسلي: <strong>${serial}</strong> &nbsp; | &nbsp; تاريخ الإصدار: ${escapeHtml(issueDate)} &nbsp; | &nbsp; عدد النتائج: ${files.length}</div><table><thead><tr><th>رقم الملف</th><th>التاريخ</th><th>جهة الورود</th><th>الموضوع</th><th>الأولوية</th><th>الحالة</th></tr></thead><tbody>${files.map((file) => `<tr><td>${escapeHtml(file.fileNumber)}</td><td>${escapeHtml(formatDate(file.createdAt))}</td><td>${escapeHtml(file.sourceEntity)}</td><td>${escapeHtml(file.subject)}</td><td>${escapeHtml(importanceLabels[file.importance])}</td><td>${escapeHtml(statusLabels[file.status])}</td></tr>`).join("")}</tbody></table><div class="signature"><div class="signature-box"><div>توقيع رئيس النيابة العامة</div><div class="line"></div><div>الاسم: ____________________</div></div><div class="signature-box"><div>الختم الرسمي</div><div class="stamp">ختم النيابة العامة</div></div></div><script>window.onload=()=>window.print()</script></body></html>`); printable.document.close(); };
-  return <div className="director-filter-bar"><div className="director-filter-title"><SlidersHorizontal size={16} /><strong>بحث وفرز ملفات التوجيه</strong></div><div className="director-filter-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="رقم الوارد، الموضوع، الجهة أو المسؤول..." /></div><select className="sort-select type-filter" value={fileType} onChange={(event) => setFileType(event.target.value)}><option value="">كل أنواع الوارد</option><option value="وارد عام">وارد عام</option><option value="وارد مكاتبات">وارد مكاتبات</option><option value="وارد شكاوي">وارد شكاوي</option><option value="وارد رئاسي">وارد رئاسي</option><option value="وارد خاص">وارد خاص</option></select><input className="source-filter" value={sourceEntity} onChange={(event) => setSourceEntity(event.target.value)} placeholder="جهة الورود" /><button className={`filter-chip ${status === "awaiting_direction" ? "selected" : ""}`} onClick={() => setStatus(status === "awaiting_direction" ? "" : "awaiting_direction")}><Clock3 size={13} /> تحتاج توجيه</button><button className={`filter-chip ${importance === "urgent" ? "selected urgent" : ""}`} onClick={() => setImportance(importance === "urgent" ? "" : "urgent")}><Sparkles size={13} /> عاجل</button><button className={`filter-chip ${status === "in_progress" ? "selected" : ""}`} onClick={() => setStatus(status === "in_progress" ? "" : "in_progress")}><History size={13} /> قيد المتابعة</button><select className="sort-select" value={sortBy} onChange={(event) => setSortBy(event.target.value as "date_desc" | "date_asc" | "priority")}><option value="date_desc">الأحدث أولًا</option><option value="date_asc">الأقدم أولًا</option><option value="priority">الأولوية أولًا</option></select><button className="filter-chip export-chip" onClick={exportExcel}><Download size={13} /> Excel</button><button className="filter-chip export-chip" onClick={exportPdf}><Printer size={13} /> PDF</button>{(search || status || importance || fileType || sourceEntity) && <button className="filter-clear" onClick={clear}><X size={14} /> مسح</button>}</div>;
+  return <div className="director-filter-bar"><div className="director-filter-title"><SlidersHorizontal size={16} /><strong>بحث وفرز ملفات التوجيه</strong></div><div className="director-filter-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="رقم الوارد، الموضوع، الجهة أو المسؤول..." /></div><select className="sort-select type-filter" value={fileType} onChange={(event) => setFileType(event.target.value)}><option value="">كل أنواع الوارد</option><option value="وارد عام">وارد عام</option><option value="وارد مكاتبات">وارد مكاتبات</option><option value="وارد شكاوي">وارد شكاوي</option><option value="وارد رئاسي">وارد رئاسي</option><option value="وارد خاص">وارد خاص</option></select><input className="source-filter" value={sourceEntity} onChange={(event) => setSourceEntity(event.target.value)} placeholder="جهة الورود" /><button className={`filter-chip ${status === "awaiting_direction" ? "selected" : ""}`} onClick={() => setStatus(status === "awaiting_direction" ? "" : "awaiting_direction")}><Clock3 size={13} /> تحتاج توجيه</button><button className={`filter-chip ${importance === "urgent" ? "selected urgent" : ""}`} onClick={() => setImportance(importance === "urgent" ? "" : "urgent")}><Sparkles size={13} /> عاجل</button><button className={`filter-chip ${status === "in_progress" ? "selected" : ""}`} onClick={() => setStatus(status === "in_progress" ? "" : "in_progress")}><History size={13} /> قيد المتابعة</button><select className="sort-select" value={sortBy} onChange={(event) => setSortBy(event.target.value as "date_desc" | "date_asc" | "priority")}><option value="date_desc">الأحدث أولًا</option><option value="date_asc">الأقدم أولًا</option><option value="priority">الأولوية أولًا</option></select><button className="filter-chip export-chip" onClick={() => exportPrioritiesToCsv(files)} title="تصدير القائمة الحالية كملف CSV"><Download size={13} /> تصدير CSV</button><button className="filter-chip export-chip" onClick={exportExcel}><Download size={13} /> Excel</button><button className="filter-chip export-chip" onClick={exportPdf}><Printer size={13} /> PDF</button>{(search || status || importance || fileType || sourceEntity) && <button className="filter-clear" onClick={clear}><X size={14} /> مسح</button>}</div>;
 }
 
 function ScaleMark() {
@@ -1182,6 +1190,14 @@ function DashboardView({ stats, files, onOpen, onRefresh, isAdmin }: { stats: an
         <p>تابع حركة الأوليات واعرف ما يحتاج إلى قرارك الآن.</p>
       </div>
       <div className="welcome-actions">
+        <button
+          type="button"
+          className="outline-button"
+          onClick={() => exportPrioritiesToCsv(files)}
+          title="تصدير قائمة الأوليات الحالية إلى ملف CSV متوافق مع Excel"
+        >
+          <Download size={16} /> تصدير CSV
+        </button>
         <button className="outline-button" onClick={onRefresh}>
           <RefreshCw size={16} /> تحديث
         </button>
@@ -1268,7 +1284,17 @@ function DashboardView({ stats, files, onOpen, onRefresh, isAdmin }: { stats: an
             <h2>آخر الملفات الواردة</h2>
             <span>تظهر هنا أحدث السجلات المضافة للنظام</span>
           </div>
-          <button className="text-button" onClick={() => onOpen(files[0]?.id)}>عرض الكل <ChevronLeft size={15} /></button>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              type="button"
+              className="outline-button small"
+              onClick={() => exportPrioritiesToCsv(files)}
+              title="تصدير قائمة الملفات الواردة الحالية إلى ملف CSV"
+            >
+              <Download size={13} /> تصدير CSV
+            </button>
+            <button className="text-button" onClick={() => onOpen(files[0]?.id)}>عرض الكل <ChevronLeft size={15} /></button>
+          </div>
         </div>
         {files.length === 0 ? (
           <div className="empty-state">
