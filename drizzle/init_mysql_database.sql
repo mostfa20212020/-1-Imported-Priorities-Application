@@ -1,7 +1,8 @@
 -- =============================================================================
 -- نظام إدارة الأوليات - النيابة العامة
--- MySQL Database Initial Schema (DDL)
+-- MySQL Database Complete Schema (DDL)
 -- المتوافق بنسبة 100% مع Drizzle ORM ونموذج src/db/schema.ts
+-- يشمل: الجداول الأساسية، الأرشيف المحلي، إصدارات الـ PDF، سجل التدقيق، وعمليات الترحيل
 -- =============================================================================
 
 SET NAMES utf8mb4;
@@ -111,6 +112,137 @@ CREATE TABLE IF NOT EXISTS `notifications` (
   INDEX `notifications_file_id_idx` (`file_id`),
   CONSTRAINT `notifications_file_id_incoming_files_id_fk`
     FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 5. جدول الأرشيف المحلي (archives)
+-- يمثل المعاملة المكتملة المرحلة إلى الأرشيف المحلي
+-- قيد Unique على file_id يمنع تكرار أرشفة المعاملة
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `archives` (
+  `id` INT AUTO_INCREMENT NOT NULL,
+  `file_id` INT NOT NULL,
+  `file_number` VARCHAR(255) NOT NULL,
+  `archived_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `archived_by` VARCHAR(255) NOT NULL,
+  `status` VARCHAR(64) NOT NULL DEFAULT 'ARCHIVED',
+  `current_pdf_version` INT NOT NULL DEFAULT 1,
+  `original_pdf_version` INT NOT NULL DEFAULT 1,
+  `original_pdf_hash` VARCHAR(128) NULL,
+  `current_pdf_hash` VARCHAR(128) NULL,
+  `notes` TEXT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `archives_id` PRIMARY KEY (`id`),
+  CONSTRAINT `archives_file_id_unique` UNIQUE (`file_id`),
+  INDEX `archives_file_id_idx` (`file_id`),
+  INDEX `archives_file_number_idx` (`file_number`),
+  INDEX `archives_status_idx` (`status`),
+  INDEX `archives_archived_at_idx` (`archived_at`),
+  CONSTRAINT `archives_file_id_incoming_files_id_fk`
+    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 6. جدول إصدارات ملفات الـ PDF (pdf_versions)
+-- Version 1 = النسخة الرسمية الأولى المعتمدة عند الترحيل
+-- الإصدارات اللاحقة تحفظ أي تعديلات إدارية دون حذف النسخ السابقة
+-- قيد Unique على (archive_id, version_number) يمنع تكرار رقم الإصدار
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `pdf_versions` (
+  `id` INT AUTO_INCREMENT NOT NULL,
+  `archive_id` INT NOT NULL,
+  `file_id` INT NOT NULL,
+  `version_number` INT NOT NULL,
+  `file_name` VARCHAR(255) NOT NULL,
+  `file_path` TEXT NULL,
+  `file_size` INT NULL,
+  `file_hash` VARCHAR(128) NOT NULL,
+  `created_by` VARCHAR(255) NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `reason` TEXT NULL,
+  `status` VARCHAR(64) NOT NULL DEFAULT 'ACTIVE',
+  `is_current` BOOLEAN NOT NULL DEFAULT FALSE,
+  CONSTRAINT `pdf_versions_id` PRIMARY KEY (`id`),
+  CONSTRAINT `pdf_versions_archive_version_unique` UNIQUE (`archive_id`, `version_number`),
+  INDEX `pdf_versions_archive_id_idx` (`archive_id`),
+  INDEX `pdf_versions_file_id_idx` (`file_id`),
+  INDEX `pdf_versions_file_hash_idx` (`file_hash`),
+  CONSTRAINT `pdf_versions_archive_id_archives_id_fk`
+    FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `pdf_versions_file_id_incoming_files_id_fk`
+    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 7. جدول سجل التدقيق والمراجعة الشامل (audit_logs)
+-- يسجل كافة التعديلات على البيانات حقلاً بحقل
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `audit_logs` (
+  `id` INT AUTO_INCREMENT NOT NULL,
+  `archive_id` INT NULL,
+  `file_id` INT NULL,
+  `user_id` INT NULL,
+  `username` VARCHAR(255) NULL,
+  `action` VARCHAR(64) NOT NULL,
+  `table_name` VARCHAR(128) NOT NULL,
+  `record_id` VARCHAR(128) NOT NULL,
+  `field_name` VARCHAR(128) NULL,
+  `old_value` TEXT NULL,
+  `new_value` TEXT NULL,
+  `ip_address` VARCHAR(64) NULL,
+  `device_info` TEXT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `audit_logs_id` PRIMARY KEY (`id`),
+  INDEX `audit_logs_archive_id_idx` (`archive_id`),
+  INDEX `audit_logs_file_id_idx` (`file_id`),
+  INDEX `audit_logs_user_id_idx` (`user_id`),
+  INDEX `audit_logs_table_record_idx` (`table_name`, `record_id`),
+  INDEX `audit_logs_created_at_idx` (`created_at`),
+  CONSTRAINT `audit_logs_archive_id_archives_id_fk`
+    FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `audit_logs_file_id_incoming_files_id_fk`
+    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `audit_logs_user_id_users_id_fk`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- 8. جدول عمليات الترحيل السحابي إلى المحلي (archive_transfers)
+-- يسجل محاولات الترحيل والتأكيد وحالات الإخفاق وإعادة المحاولة
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `archive_transfers` (
+  `id` INT AUTO_INCREMENT NOT NULL,
+  `file_id` INT NOT NULL,
+  `archive_id` INT NULL,
+  `transfer_status` VARCHAR(64) NOT NULL DEFAULT 'PENDING',
+  `started_at` TIMESTAMP NULL,
+  `completed_at` TIMESTAMP NULL,
+  `attempt_count` INT NOT NULL DEFAULT 0,
+  `error_message` TEXT NULL,
+  `source_reference` VARCHAR(255) NOT NULL DEFAULT 'cloud_firestore',
+  `destination_reference` VARCHAR(255) NOT NULL DEFAULT 'local_mysql',
+  `payload_hash` VARCHAR(128) NULL,
+  `pdf_hash` VARCHAR(128) NULL,
+  `last_attempt_at` TIMESTAMP NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `archive_transfers_id` PRIMARY KEY (`id`),
+  INDEX `archive_transfers_file_id_idx` (`file_id`),
+  INDEX `archive_transfers_archive_id_idx` (`archive_id`),
+  INDEX `archive_transfers_status_idx` (`transfer_status`),
+  CONSTRAINT `archive_transfers_file_id_incoming_files_id_fk`
+    FOREIGN KEY (`file_id`) REFERENCES `incoming_files` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `archive_transfers_archive_id_archives_id_fk`
+    FOREIGN KEY (`archive_id`) REFERENCES `archives` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
